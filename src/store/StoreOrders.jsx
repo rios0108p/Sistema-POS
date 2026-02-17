@@ -1,0 +1,735 @@
+import React, { useEffect, useState } from "react";
+import Loading from "../Components/Common/Loading";
+import { pedidosAPI, tiendasAPI, productosAPI } from "../services/api";
+import { useAuth } from "../context/AuthContext";
+import {
+  Clock, Package, Truck, CheckCircle, Search, Mail, Phone,
+  MapPin, User, Printer, X, RefreshCw, ChevronRight, FileText,
+  Calendar, ShoppingBag, CreditCard, Plus, Trash2, Store,
+  Filter, ArrowRight, DollarSign, AlertCircle, Layers
+} from "lucide-react";
+import { CURRENCY_SYMBOL } from "../utils/currency";
+import { toast } from "react-hot-toast";
+import { exportToExcel, exportToPDF } from "../utils/exportUtils";
+
+const StoreOrders = () => {
+  const { user } = useAuth();
+  const [pedidos, setPedidos] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
+  const [modalAbierto, setModalAbierto] = useState(false);
+  const [modalCreacionAbierto, setModalCreacionAbierto] = useState(false);
+  const [filtroEstado, setFiltroEstado] = useState("todos");
+  const [filtroTienda, setFiltroTienda] = useState("todas");
+  const [busqueda, setBusqueda] = useState("");
+  const [tiendas, setTiendas] = useState([]);
+  const [procesandoIds, setProcesandoIds] = useState([]);
+
+  // Estado para nueva solicitud
+  const [nuevaSolicitud, setNuevaSolicitud] = useState({
+    tienda_id: "",
+    notas: "",
+    productos: []
+  });
+  const [productosDisponibles, setProductosDisponibles] = useState([]);
+  const [alertasBajoStock, setAlertasBajoStock] = useState([]);
+  const [busquedaProducto, setBusquedaProducto] = useState("");
+
+  const currency = CURRENCY_SYMBOL;
+
+  const obtenerDatosBase = async () => {
+    try {
+      if (user?.rol === 'admin') {
+        const [tiendasData, productosData, alertasData] = await Promise.all([
+          tiendasAPI.getAll(),
+          productosAPI.getAll(),
+          tiendasAPI.getAlertasBajoStock()
+        ]);
+        setTiendas(tiendasData);
+        setProductosDisponibles(productosData);
+        setAlertasBajoStock(alertasData);
+      }
+    } catch (error) {
+      console.error("Error al obtener datos base:", error);
+    }
+  };
+
+  const obtenerPedidos = async () => {
+    setCargando(true);
+    try {
+      const tiendaIdFiltro = user?.rol !== 'admin' ? user?.tienda_id : "";
+      const data = await pedidosAPI.getAll(tiendaIdFiltro);
+      setPedidos(data || []);
+    } catch (error) {
+      console.error("Error al obtener pedidos:", error.message);
+      toast.error("Error al sincronizar solicitudes");
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useEffect(() => {
+    obtenerPedidos();
+    obtenerDatosBase();
+  }, []);
+
+  // Auto-refresh every 30 seconds for real-time updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      obtenerPedidos();
+    }, 30000); // 30 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleCrearSolicitud = async () => {
+    if (!nuevaSolicitud.tienda_id || nuevaSolicitud.productos.length === 0) {
+      return toast.error("Debe seleccionar una tienda y al menos un producto");
+    }
+
+    const subtotal = nuevaSolicitud.productos.reduce((acc, p) => acc + (p.cantidad * p.precio_unitario), 0);
+
+    try {
+      await pedidosAPI.create({
+        ...nuevaSolicitud,
+        usuario_solicitante_id: user.id,
+        subtotal,
+        total: subtotal,
+        envio: 0
+      });
+      toast.success("Solicitud enviada correctamente");
+      setModalCreacionAbierto(false);
+      setNuevaSolicitud({ tienda_id: "", notas: "", productos: [] });
+      obtenerPedidos();
+    } catch (error) {
+      toast.error("Error al crear solicitud");
+    }
+  };
+
+  const agregarProductoASolicitud = (prod) => {
+    const precioUnitario = Number(prod.precio_compra) || 0;
+
+    setNuevaSolicitud(prev => {
+      const existe = prev.productos.find(p => p.producto_id === prod.id);
+      if (existe) {
+        return {
+          ...prev,
+          productos: prev.productos.map(p =>
+            p.producto_id === prod.id ? { ...p, cantidad: p.cantidad + 1 } : p
+          )
+        };
+      }
+      return {
+        ...prev,
+        productos: [...prev.productos, {
+          producto_id: prod.id,
+          nombre: prod.nombre,
+          cantidad: 1,
+          precio_unitario: precioUnitario
+        }]
+      };
+    });
+  };
+
+  const agregarAlertaASolicitud = (alerta) => {
+    setNuevaSolicitud(prev => {
+      if (prev.tienda_id && prev.tienda_id != alerta.tienda_id) {
+        toast.error(`Esta alerta corresponde a ${alerta.tienda_nombre}. Seleccione la tienda correcta o cree una solicitud nueva.`);
+        return prev;
+      }
+
+      const precioUnitario = Number(alerta.precio_compra) || 0;
+      const existe = prev.productos.find(p => p.producto_id === alerta.producto_id);
+
+      const nuevosProductos = existe
+        ? prev.productos.map(p => p.producto_id === alerta.producto_id ? { ...p, cantidad: p.cantidad + 1 } : p)
+        : [...prev.productos, {
+          producto_id: alerta.producto_id,
+          nombre: alerta.producto_nombre,
+          cantidad: 1,
+          precio_unitario: precioUnitario
+        }];
+
+      return {
+        ...prev,
+        tienda_id: alerta.tienda_id,
+        productos: nuevosProductos
+      };
+    });
+
+    setAlertasBajoStock(prev => prev.filter(a => !(a.producto_id === alerta.producto_id && a.tienda_id === alerta.tienda_id)));
+  };
+
+  const actualizarEstadoPedido = async (pedidoId, nuevoEstado) => {
+    if (procesandoIds.includes(pedidoId)) return;
+
+    const pedidoActual = pedidos.find(p => p.id === pedidoId);
+    const estadoActual = pedidoActual?.estado?.toString().trim().toUpperCase();
+    if (estadoActual === 'COMPRADO' || estadoActual === 'CANCELADO') {
+      toast.error('Este pedido ya ha sido finalizado');
+      return;
+    }
+
+    try {
+      if (nuevoEstado === 'EN PROCESO') return;
+      setProcesandoIds(prev => [...prev, pedidoId]);
+
+      await pedidosAPI.updateEstado(pedidoId, { estado: nuevoEstado, usuario_id: user?.id });
+
+      setPedidos(prevPedidos =>
+        prevPedidos.map(p =>
+          p.id === pedidoId ? { ...p, estado: nuevoEstado.toUpperCase() } : p
+        )
+      );
+
+      toast.success(nuevoEstado === 'COMPRADO' ? "Solicitud completada e inventario actualizado" : "Estado actualizado");
+      obtenerPedidos();
+    } catch (error) {
+      console.error("Error al actualizar estado:", error);
+      toast.error(error.response?.data?.error || "Error al asignar estado");
+      await obtenerPedidos();
+    } finally {
+      setProcesandoIds(prev => prev.filter(id => id !== pedidoId));
+    }
+  };
+
+  const eliminarPedido = async (pedidoId) => {
+    if (!window.confirm("¿Seguro que deseas eliminar esta solicitud permanentemente?")) return;
+    try {
+      await pedidosAPI.delete(pedidoId);
+      setPedidos(prev => prev.filter(p => p.id !== pedidoId));
+      toast.success("Solicitud eliminada correctamente");
+    } catch (error) {
+      console.error("Error al eliminar:", error);
+      toast.error("Solo se pueden eliminar solicitudes CANCELADAS");
+    }
+  };
+
+  const exportarPDF = () => {
+    const headers = ["ID", "TIENDA/CLIENTE", "SOLICITANTE", "ESTADO", "FECHA", "TOTAL"];
+    const data = pedidosFiltrados.map(p => [
+      `#${p.id.toString().padStart(5, '0')}`,
+      p.tienda_id ? (p.tienda_nombre || `SUCURSAL #${p.tienda_id}`) : p.nombre_cliente,
+      p.usuario_nombre || 'SISTEMA',
+      p.estado,
+      new Date(p.created_at).toLocaleDateString(),
+      `${currency}${p.total}`
+    ]);
+    exportToPDF({ title: 'Gestión de Suministros (Pedidos)', headers, data, fileName: 'Reporte_Suministros' });
+  };
+
+  const exportarExcel = () => {
+    const dataToExport = pedidosFiltrados.map(p => ({
+      'ID': `#${p.id.toString().padStart(5, '0')}`,
+      'Tienda/Cliente': p.tienda_id ? (p.tienda_nombre || `SUCURSAL #${p.tienda_id}`) : p.nombre_cliente,
+      'Solicitante': p.usuario_nombre || 'SISTEMA',
+      'Estado': p.estado,
+      'Fecha': new Date(p.created_at).toLocaleDateString(),
+      'Total': p.total
+    }));
+    exportToExcel(dataToExport, 'Reporte_Suministros', 'Pedidos');
+  };
+
+  const quitarProductoDeSolicitud = (productoId) => {
+    setNuevaSolicitud({
+      ...nuevaSolicitud,
+      productos: nuevaSolicitud.productos.filter(p => p.producto_id !== productoId)
+    });
+  };
+
+  const pedidosFiltrados = pedidos.filter(p => {
+    const cumpleEstado = filtroEstado === "todos" || p.estado === filtroEstado;
+    const cumpleTienda = filtroTienda === "todas" || p.tienda_id === parseInt(filtroTienda);
+    const cumpleBusqueda = p.id.toString().includes(busqueda) ||
+      (p.tienda_nombre || "").toLowerCase().includes(busqueda.toLowerCase());
+    return cumpleEstado && cumpleTienda && cumpleBusqueda;
+  });
+
+  const getStatusBadgeClass = (estado) => {
+    const e = estado?.toLowerCase();
+    switch (e) {
+      case 'pendiente': return 'badge-standard bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 border-indigo-100 dark:border-indigo-800/50';
+      case 'en proceso': return 'badge-standard bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 border-indigo-200 dark:border-indigo-800/50';
+      case 'comprado': return 'badge-standard bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 border-emerald-200 dark:border-emerald-800/50';
+      case 'cancelado': return 'badge-standard bg-rose-100 dark:bg-rose-900/30 text-rose-600 border-rose-200 dark:border-rose-800/50';
+      default: return 'badge-standard bg-slate-100 dark:bg-slate-900 text-slate-600 border-slate-200';
+    }
+  };
+
+  if (cargando) return <Loading />;
+
+  return (
+    <div className="p-4 mb-28 bg-slate-50/50 dark:bg-slate-900/50 min-h-screen transition-all duration-300">
+      <div>
+        {/* Header Section */}
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-4 animate-in fade-in slide-in-from-top-4 duration-700">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="p-3 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-2xl shadow-xl shadow-indigo-600/20 group hover:rotate-3 transition-transform duration-500">
+                <Truck className="text-white" size={28} strokeWidth={2} />
+              </div>
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-3 uppercase leading-none">
+                  LOGÍSTICA DE <span className="text-indigo-600 dark:text-indigo-400">SUMINISTRO</span>
+                </h1>
+                <p className="text-[9px] text-slate-400 mt-2 font-black uppercase tracking-[0.3em] opacity-80 flex items-center gap-2">
+                  <span className="w-6 h-[1.5px] bg-indigo-500/30"></span>
+                  Gestión de Requerimientos
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3 w-full xl:w-auto">
+            {user?.rol === 'admin' && (
+              <button
+                onClick={() => setModalCreacionAbierto(true)}
+                className="btn-primary flex-1 xl:flex-none px-6 h-[44px] rounded-2xl shadow-lg shadow-indigo-600/20 text-[10px] tracking-widest"
+              >
+                <Plus size={20} strokeWidth={3} />
+                NUEVA SOLICITUD
+              </button>
+            )}
+            <button
+              onClick={obtenerPedidos}
+              className="btn-secondary flex-1 xl:flex-none px-4 h-[44px] rounded-2xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-indigo-400 shadow-sm transition-all"
+            >
+              <RefreshCw size={18} className={`${cargando ? "animate-spin" : ""} text-indigo-500`} />
+              <span className="font-black text-[9px] tracking-widest">SINCRONIZAR</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Search and Filters Bar */}
+        <div className="card-standard p-2 mb-4 flex flex-col lg:flex-row items-center gap-2 shadow-sm border-indigo-500/5 rounded-2xl bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl">
+          {user?.rol === 'admin' ? (
+            <div className="flex-1 w-full relative group">
+              <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-all duration-300" size={18} />
+              <input
+                type="text"
+                placeholder="SUCURSAL..."
+                className="input-standard pl-12 h-[44px] rounded-xl border-transparent bg-slate-50/50 dark:bg-slate-900/50 font-black uppercase tracking-widest text-[10px] focus:ring-0 focus:outline-none"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+              />
+            </div>
+          ) : (
+            <div className="flex-1 px-4 py-3 flex items-center gap-3 text-slate-400">
+              <Package size={18} />
+              <span className="text-[10px] font-black uppercase tracking-widest">Mis Solicitudes - {user?.tienda_nombre || 'Sucursal Local'}</span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap lg:flex-nowrap gap-3 w-full lg:w-auto px-1">
+            {user?.rol === 'admin' && (
+              <div className="relative flex-1 lg:w-56">
+                <Store className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <select
+                  className="select-standard pl-10 h-[44px] rounded-xl bg-slate-50/50 dark:bg-slate-900/50 border-transparent font-black text-[10px] appearance-none focus:ring-0 focus:outline-none"
+                  value={filtroTienda}
+                  onChange={(e) => setFiltroTienda(e.target.value)}
+                >
+                  <option value="todas">SUCURSAL: TODAS</option>
+                  {tiendas.map(t => (
+                    <option key={t.id} value={t.id}>{t.nombre.toUpperCase()}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="relative flex-1 lg:w-48">
+              <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <select
+                className="select-standard pl-10 h-[44px] rounded-xl bg-slate-50/50 dark:bg-slate-900/50 border-transparent font-black text-[10px] focus:ring-0 focus:outline-none"
+                value={filtroEstado}
+                onChange={(e) => setFiltroEstado(e.target.value)}
+              >
+                <option value="todos">ESTADO: TODOS</option>
+                <option value="PENDIENTE">PENDIENTES</option>
+                <option value="COMPRADO">COMPRADOS</option>
+                <option value="CANCELADO">CANCELADOS</option>
+              </select>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={exportarExcel}
+                className="h-[44px] px-5 rounded-xl flex items-center gap-2 bg-white dark:bg-slate-800 text-emerald-600 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-emerald-50 dark:hover:bg-emerald-900/10 transition-all group"
+                title="EXPORTAR EXCEL"
+              >
+                <Layers size={16} className="group-hover:scale-110 transition-transform" />
+                <span className="text-[10px] font-black uppercase tracking-widest">EXCEL</span>
+              </button>
+              <button
+                onClick={exportarPDF}
+                className="h-[44px] px-5 rounded-xl flex items-center gap-2 bg-white dark:bg-slate-800 text-rose-500 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-rose-50 dark:hover:bg-rose-900/10 transition-all group"
+                title="EXPORTAR PDF"
+              >
+                <FileText size={16} className="group-hover:scale-110 transition-transform" />
+                <span className="text-[10px] font-black uppercase tracking-widest">PDF</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Orders Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {pedidosFiltrados.length === 0 ? (
+            <div className="col-span-full py-40 flex flex-col items-center justify-center text-center animate-in fade-in zoom-in duration-1000">
+              <div className="relative mb-10">
+                <div className="absolute inset-0 bg-indigo-500/10 blur-[80px] rounded-full scale-150 animate-pulse"></div>
+                <div className="relative w-32 h-32 bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 rounded-[3rem] flex items-center justify-center shadow-2xl border border-white dark:border-white/5 rotate-6 hover:rotate-0 transition-transform duration-700">
+                  <Package size={56} className="text-indigo-300 dark:text-indigo-500/40" strokeWidth={1} />
+                </div>
+              </div>
+              <h3 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-[0.4em] mb-3">Sin Solicitudes</h3>
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest max-w-[300px] leading-relaxed">No se encontraron requerimientos que coincidan con los filtros aplicados</p>
+            </div>
+          ) : (
+            pedidosFiltrados.map((p) => (
+              <div key={p.id} className="group relative bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700/50 shadow-sm hover:shadow-xl hover:border-indigo-400/30 hover:-translate-y-1 transition-all duration-300 flex flex-col overflow-hidden">
+                {/* Header of Card */}
+                <div className="px-5 py-4 border-b dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/20 flex justify-between items-center relative z-10">
+                  <div className="flex flex-col">
+                    <span className="text-[8px] font-black text-indigo-500/60 uppercase tracking-widest mb-0.5">ORDEN</span>
+                    <span className="text-base font-black text-slate-800 dark:text-white tracking-tight">#{p.id.toString().padStart(5, '0')}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`${getStatusBadgeClass(p.estado)} !py-1 !px-2.5 !text-[8px]`}>{p.estado}</span>
+                    {user?.rol === 'admin' && p.estado === 'CANCELADO' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); eliminarPedido(p.id); }}
+                        className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-all"
+                      >
+                        <Trash2 size={16} strokeWidth={2.5} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Body of Card */}
+                <div className="p-5 flex-1 relative z-10 flex flex-col gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-xl flex items-center justify-center text-indigo-500 shrink-0 group-hover:scale-105 transition-transform duration-300">
+                      <Store size={20} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-bold text-slate-800 dark:text-white uppercase tracking-tight text-sm truncate">
+                        {p.tienda_id ? (p.tienda_nombre || `SUCURSAL #${p.tienda_id}`) : p.nombre_cliente}
+                      </h3>
+                      <div className="flex items-center gap-2 mt-1 opacity-60">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                          <User size={10} className="text-indigo-400" /> {p.usuario_nombre || 'SISTEMA'}
+                        </span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                          <Calendar size={10} className="text-indigo-400" /> {new Date(p.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">PRODS</span>
+                      <div className="flex items-center justify-center gap-1">
+                        <Package size={10} className="text-indigo-400" />
+                        <span className="text-sm font-black text-slate-700 dark:text-slate-200">{p.detalles?.length || 0}</span>
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">TOTAL</span>
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-[9px] font-black text-emerald-500/60">{currency}</span>
+                        <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">{parseFloat(p.total).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {p.notas && (
+                    <div className="bg-indigo-50/40 dark:bg-indigo-900/10 p-3 rounded-xl border border-indigo-100/50 dark:border-indigo-900/20 relative overflow-hidden">
+                      <p className="text-[9px] font-bold text-indigo-700/80 dark:text-indigo-400/80 italic line-clamp-2">
+                        "{p.notas}"
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer of Card / Actions */}
+                <div className="px-5 pb-5 pt-0 relative z-10">
+                  {p.estado?.toString().trim().toUpperCase() === 'PENDIENTE' ? (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          if (window.confirm("¿Confirmar que esta mercancía ha sido comprada y recibida?")) {
+                            actualizarEstadoPedido(p.id, 'COMPRADO');
+                          }
+                        }}
+                        disabled={procesandoIds.includes(p.id)}
+                        className="flex-1 btn-primary bg-emerald-600 hover:bg-emerald-700 h-[40px] rounded-xl text-[8px] tracking-[.15em]"
+                      >
+                        {procesandoIds.includes(p.id) ? <RefreshCw className="animate-spin" size={14} /> : <CheckCircle size={14} />}
+                        {procesandoIds.includes(p.id) ? 'WAIT' : 'CONFIRMAR'}
+                      </button>
+                      <button
+                        onClick={() => { setPedidoSeleccionado(p); setModalAbierto(true); }}
+                        className="w-[40px] h-[40px] rounded-xl flex items-center justify-center bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 border border-indigo-100 dark:border-indigo-900/30 hover:bg-indigo-100 transition-all"
+                      >
+                        <ArrowRight size={18} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 items-center">
+                      <div className={`flex-1 h-[40px] flex items-center justify-center gap-2 rounded-xl border font-black text-[8px] uppercase tracking-widest ${p.estado?.toUpperCase() === 'COMPRADO'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 text-emerald-600'
+                        : 'bg-rose-50 dark:bg-rose-950/20 border-rose-100 text-rose-600'
+                        }`}>
+                        {p.estado?.toUpperCase() === 'COMPRADO' ? <CheckCircle size={14} /> : <X size={14} />}
+                        {p.estado?.toUpperCase() === 'COMPRADO' ? 'OK' : 'FAIL'}
+                      </div>
+                      <button
+                        onClick={() => { setPedidoSeleccionado(p); setModalAbierto(true); }}
+                        className="w-[40px] h-[40px] rounded-xl flex items-center justify-center bg-slate-50 dark:bg-slate-700/50 text-slate-400 border border-slate-200 dark:border-slate-700/50 hover:text-indigo-600 hover:border-indigo-400 transition-all"
+                      >
+                        <ArrowRight size={18} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Details Modal */}
+      {modalAbierto && pedidoSeleccionado && (
+        <div className="modal-overlay backdrop-blur-md">
+          <div className="modal-container max-w-4xl p-0 overflow-hidden flex flex-col max-h-[90vh] border-none shadow-2xl animate-in fade-in zoom-in duration-300">
+            {/* Modal Header */}
+            <div className="p-6 border-b dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 flex justify-between items-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500"></div>
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg text-[8px] font-black uppercase tracking-widest">Detalle de Suministro</span>
+                  <span className={`${getStatusBadgeClass(pedidoSeleccionado.estado)} !py-1 !px-2 !text-[8px]`}>{pedidoSeleccionado.estado}</span>
+                </div>
+                <h2 className="text-xl font-black text-slate-800 dark:text-white uppercase tracking-tight leading-none">
+                  ORDEN <span className="text-indigo-600">#{pedidoSeleccionado.id}</span>
+                </h2>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-2 flex items-center gap-1.5 opacity-60">
+                  <Calendar size={10} className="text-indigo-400" />
+                  {new Date(pedidoSeleccionado.created_at).toLocaleString()}
+                </p>
+              </div>
+              <button onClick={() => setModalAbierto(false)} className="w-10 h-10 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-rose-600 rounded-xl shadow-sm transition-all flex items-center justify-center active:scale-90 border dark:border-slate-700">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <h3 className="text-[9px] font-black text-indigo-500/60 uppercase tracking-widest flex items-center gap-2"><Store size={12} /> DESTINO</h3>
+                  <div className="bg-slate-50/50 dark:bg-slate-900/30 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/60 shadow-inner">
+                    <p className="text-lg font-black text-slate-800 dark:text-white uppercase tracking-tight mb-2">
+                      {pedidoSeleccionado.tienda_id ? (pedidoSeleccionado.tienda_nombre || `SUCURSAL #${pedidoSeleccionado.tienda_id}`) : pedidoSeleccionado.nombre_cliente}
+                    </p>
+                    <div className="flex items-center gap-3 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                      <User size={12} className="text-indigo-400/50" />
+                      Solicitante: <span className="text-slate-600 dark:text-slate-300 ml-1">{pedidoSeleccionado.usuario_nombre || 'SISTEMA'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-[9px] font-black text-indigo-500/60 uppercase tracking-widest flex items-center gap-2"><FileText size={12} /> NOTAS</h3>
+                  <div className="bg-indigo-50/20 dark:bg-indigo-900/5 p-5 rounded-2xl border border-indigo-100/50 dark:border-indigo-900/10 h-full flex items-center italic text-[11px] text-slate-600 dark:text-slate-400">
+                    {pedidoSeleccionado.notas || "Sin observaciones adicionales."}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Layers size={12} /> DESGLOSE</h3>
+                <div className="bg-white dark:bg-slate-800 rounded-3xl border dark:border-slate-700/50 shadow-sm overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-slate-900 dark:bg-black text-white uppercase text-[8px] font-black tracking-widest">
+                        <th className="px-5 py-3">Producto</th>
+                        <th className="px-5 py-3 text-center">Cant.</th>
+                        <th className="px-5 py-3 text-right">Unitario</th>
+                        <th className="px-5 py-3 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                      {pedidoSeleccionado.detalles?.map((prod, i) => (
+                        <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition-colors">
+                          <td className="px-5 py-3 text-[10px] uppercase font-bold text-slate-800 dark:text-white">{prod.producto_nombre}</td>
+                          <td className="px-5 py-3 text-center"><span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 rounded-md font-black text-[10px]">{prod.cantidad}</span></td>
+                          <td className="px-5 py-3 text-right font-bold text-[10px] text-slate-400">{currency} {parseFloat(prod.precio_unitario || 0).toFixed(2)}</td>
+                          <td className="px-5 py-3 text-right font-black text-[11px] text-slate-800 dark:text-white">{currency} {parseFloat(prod.subtotal || 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan="3" className="px-5 py-4 text-right text-[9px] font-black text-slate-400 uppercase tracking-widest">INVERSIÓN TOTAL</td>
+                        <td className="px-5 py-4 text-right bg-indigo-50/30 dark:bg-indigo-900/10 text-xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter">
+                          {currency} {parseFloat(pedidoSeleccionado.total).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-6 border-t dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 flex justify-end gap-3 sticky bottom-0 z-20">
+              <button onClick={() => window.print()} className="px-5 h-10 rounded-xl border border-slate-200 dark:border-slate-700 font-black text-[9px] uppercase hover:bg-white dark:hover:bg-slate-800 transition-all flex items-center gap-2">
+                <Printer size={16} /> COMPROBANTE
+              </button>
+              <button onClick={() => setModalAbierto(false)} className="btn-primary px-8 h-10 rounded-xl text-[9px]">CERRAR</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Creation Modal */}
+      {modalCreacionAbierto && (
+        <div className="modal-overlay backdrop-blur-md">
+          <div className="modal-container max-w-5xl p-0 overflow-hidden flex flex-col h-[85vh] border-none shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div className="p-6 border-b dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/50 flex justify-between items-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500"></div>
+              <div className="flex items-center gap-4">
+                <div className="p-2.5 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-xl shadow-lg shadow-indigo-600/20"><Plus size={20} className="text-white" strokeWidth={3} /></div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 dark:text-white uppercase tracking-tight leading-none">NUEVO <span className="text-indigo-600">REQUERIMIENTO</span></h2>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1 opacity-60">Suministro</p>
+                </div>
+              </div>
+              <button onClick={() => setModalCreacionAbierto(false)} className="w-10 h-10 bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-rose-600 rounded-xl shadow-sm transition-all flex items-center justify-center active:scale-90"><X size={20} /></button>
+            </div>
+
+            <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+              <div className="w-full lg:w-80 p-6 border-r dark:border-slate-700/50 space-y-6 overflow-y-auto custom-scrollbar bg-gradient-to-br from-slate-50/50 to-indigo-50/20 dark:from-slate-900/50 dark:to-indigo-950/20">
+                <div className="space-y-3">
+                  <label className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex items-center gap-2"><Store size={12} /> DESTINO</label>
+                  <select className="input-standard h-12 rounded-2xl text-[11px] font-bold border-2 border-indigo-100 dark:border-indigo-900/30 bg-white dark:bg-slate-800 shadow-lg shadow-indigo-500/5 focus:border-indigo-400 transition-all"
+                    value={nuevaSolicitud.tienda_id} onChange={(e) => setNuevaSolicitud({ ...nuevaSolicitud, tienda_id: e.target.value })}>
+                    <option value="">SELECCIONAR SUCURSAL...</option>
+                    {tiendas.map(t => <option key={t.id} value={t.id}>{t.nombre.toUpperCase()}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex items-center gap-2"><FileText size={12} /> NOTAS</label>
+                  <textarea placeholder="Observaciones adicionales..." className="input-standard h-36 rounded-2xl text-[11px] font-bold p-4 border-2 border-indigo-100 dark:border-indigo-900/30 bg-white dark:bg-slate-800 shadow-lg shadow-indigo-500/5 resize-none focus:border-indigo-400 transition-all"
+                    value={nuevaSolicitud.notas} onChange={(e) => setNuevaSolicitud({ ...nuevaSolicitud, notas: e.target.value })} />
+                </div>
+                <div className="p-6 rounded-3xl bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-2xl shadow-indigo-600/30 flex flex-col items-center border-4 border-white/10">
+                  <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Total Estimado</span>
+                  <div className="flex items-baseline gap-1.5"><span className="text-sm font-black opacity-70">{currency}</span><span className="text-4xl font-black tracking-tighter">
+                    {nuevaSolicitud.productos.reduce((sum, p) => sum + (p.cantidad * (Number(p.precio_unitario) || 0)), 0).toLocaleString()}
+                  </span></div>
+                  <button onClick={handleCrearSolicitud} disabled={procesandoIds.length > 0 || nuevaSolicitud.productos.length === 0 || !nuevaSolicitud.tienda_id}
+                    className="mt-5 w-full h-12 bg-white text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-50 disabled:cursor-not-allowed active:scale-95">
+                    {procesandoIds.length > 0 ? <RefreshCw className="animate-spin" size={16} /> : <CheckCircle size={16} />} ENVIAR SOLICITUD
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 p-6 flex flex-col overflow-hidden bg-white dark:bg-slate-900/40">
+                <div className="mb-5 relative">
+                  <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-indigo-400" size={18} />
+                  <input type="text" placeholder="Buscar productos por nombre..." className="input-standard h-14 pl-14 pr-5 rounded-2xl text-[11px] font-bold border-2 border-indigo-100 dark:border-indigo-900/30 bg-slate-50 dark:bg-slate-800 focus:border-indigo-400 shadow-lg shadow-indigo-500/5 transition-all"
+                    value={busquedaProducto} onChange={(e) => setBusquedaProducto(e.target.value)} />
+                  {busquedaProducto && (
+                    <ul className="absolute z-50 bg-white dark:bg-slate-800 border-2 border-indigo-100 dark:border-slate-700 rounded-2xl w-full mt-2 shadow-2xl max-h-72 overflow-y-auto custom-scrollbar">
+                      {productosDisponibles.filter(p => p.nombre?.toLowerCase().includes(busquedaProducto.toLowerCase())).map(p => (
+                        <li key={p.id} onClick={() => { agregarProductoASolicitud(p); setBusquedaProducto(""); }} className="p-4 flex justify-between items-center hover:bg-indigo-50 dark:hover:bg-indigo-900/40 cursor-pointer transition-colors border-b last:border-0 dark:border-slate-700/50">
+                          <div><p className="font-bold text-[11px] uppercase text-slate-800 dark:text-white">{p.nombre}</p><p className="text-[9px] text-slate-400 mt-0.5">STOCK DISPONIBLE: {p.cantidad}</p></div>
+                          <span className="font-black text-indigo-600 dark:text-indigo-400 text-[11px]">{currency}{Number(p.precio_compra || 0).toFixed(2)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar border-2 border-indigo-100 dark:border-slate-700/50 rounded-3xl shadow-xl shadow-indigo-500/5">
+                  <table className="w-full text-left">
+                    <thead className="sticky top-0 bg-gradient-to-r from-slate-900 to-indigo-900 text-white uppercase text-[9px] font-black tracking-[0.15em] z-10 shadow-lg">
+                      <tr><th className="px-6 py-4">Producto</th><th className="px-6 py-4 text-center">Cant.</th><th className="px-6 py-4 text-right">Acción</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {nuevaSolicitud.productos.length === 0 ? (
+                        <tr><td colSpan="3" className="px-5 py-16 text-center text-slate-400"><ShoppingBag className="mx-auto mb-4 opacity-20" size={48} /><p className="text-[11px] font-black uppercase tracking-widest">Sin productos agregados</p><p className="text-[9px] text-slate-400 mt-1">Busca y selecciona productos arriba</p></td></tr>
+                      ) : (
+                        nuevaSolicitud.productos.map((prod) => (
+                          <tr key={prod.producto_id} className="hover:bg-indigo-50/50 dark:hover:bg-slate-900/50 transition-colors">
+                            <td className="px-6 py-4 text-[11px] uppercase font-bold text-slate-800 dark:text-white">{prod.nombre}</td>
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex items-center justify-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1.5 w-28 mx-auto border dark:border-slate-700">
+                                <button onClick={() => { const cant = Math.max(1, prod.cantidad - 1); setNuevaSolicitud(prev => ({ ...prev, productos: prev.productos.map(item => item.producto_id === prod.producto_id ? { ...item, cantidad: cant } : item) })); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-bold transition-all active:scale-90">-</button>
+                                <input type="number" className="w-12 bg-transparent text-center font-black text-[11px] outline-none text-slate-800 dark:text-white" value={prod.cantidad} onChange={(e) => { const val = parseInt(e.target.value) || 1; setNuevaSolicitud(prev => ({ ...prev, productos: prev.productos.map(item => item.producto_id === prod.producto_id ? { ...item, cantidad: Math.max(1, val) } : item) })); }} />
+                                <button onClick={() => { setNuevaSolicitud(prev => ({ ...prev, productos: prev.productos.map(item => item.producto_id === prod.producto_id ? { ...item, cantidad: item.cantidad + 1 } : item) })); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-bold transition-all active:scale-90">+</button>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button onClick={() => quitarProductoDeSolicitud(prod.producto_id)} className="p-2.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all active:scale-90"><Trash2 size={18} /></button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ErrorBoundary for debugging
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught an error in StoreOrders", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-10 text-center">
+          <h1 className="text-xl font-bold text-rose-500 mb-4">Error en Solicitudes</h1>
+          <pre className="text-left bg-slate-100 p-4 rounded text-xs overflow-auto max-h-96">
+            {this.state.error && this.state.error.toString()}
+            <br />
+            {this.state.error && this.state.error.stack}
+          </pre>
+          <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded">
+            Recargar Página
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default function StoreOrdersWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <StoreOrders />
+    </ErrorBoundary>
+  );
+}
