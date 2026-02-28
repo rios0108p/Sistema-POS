@@ -9,26 +9,35 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['favicon.png', 'apple-touch-icon.png', 'masked-icon.png'],
       manifest: {
-        name: 'Sistema POS Inventario',
-        short_name: 'POS System',
+        id: '/pos-punto-de-venta',
+        name: 'POS punto de venta',
+        short_name: 'POS',
         description: 'Sistema de Gestión de Inventario y Ventas Portable',
         theme_color: '#ffffff',
+        background_color: '#ffffff',
+        display: 'standalone',
+        start_url: '/',
         icons: [
           {
             src: 'pwa-192x192.png',
             sizes: '192x192',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any maskable'
           },
           {
             src: 'pwa-512x512.png',
             sizes: '512x512',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any maskable'
           }
         ]
       },
       workbox: {
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
