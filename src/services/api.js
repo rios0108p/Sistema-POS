@@ -313,10 +313,16 @@ export const turnosAPI = {
 
     // Abrir turno
     abrir: async (monto_inicial, usuario_nombre = 'Vendedor', usuario_id = null, tienda_id = null) => {
+        let payload;
+        if (monto_inicial && typeof monto_inicial === 'object') {
+            payload = monto_inicial;
+        } else {
+            payload = { monto_inicial, usuario_nombre, usuario_id, tienda_id };
+        }
         const response = await fetch(`${API_URL}/turnos/abrir`, {
             method: 'POST',
             headers: getAuthHeaders(),
-            body: JSON.stringify({ monto_inicial, usuario_nombre, usuario_id, tienda_id })
+            body: JSON.stringify(payload)
         });
         return handleResponse(response);
     },
