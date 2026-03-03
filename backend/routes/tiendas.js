@@ -370,13 +370,13 @@ router.get('/:id/resumen', async (req, res) => {
     }
 });
 
-// Importación masiva de inventario a tienda (Sobrescribir)
+// Importación masiva de inventario a tienda (Sobrescribir y crear nuevos)
 router.post('/:id/importar', async (req, res) => {
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
         const { id } = req.params;
-        const { items } = req.body; // Array de { producto_id o codigo_barras, cantidad, stock_minimo }
+        const { items } = req.body; // Array de { producto_id o codigo_barras, cantidad, stock_minimo, nombre, precio_compra, precio_venta }
 
         if (!items || !Array.isArray(items)) {
             throw new Error('Se requiere un array de items');
@@ -403,15 +403,35 @@ router.post('/:id/importar', async (req, res) => {
                     }
                 }
 
-                if (!productoId) {
-                    errores.push(`Producto no encontrado: ${item.codigo_barras || item.nombre || 'Desconocido'}`);
-                    continue;
-                }
-
+                const nombre = item.nombre || 'Producto de Excel ' + (item.codigo_barras || Date.now());
+                const precioCompra = parseFloat(item.precio_compra || 0);
+                const precioVenta = parseFloat(item.precio_venta || 0);
                 const cantidad = parseInt(item.cantidad || 0);
                 const stockMinimo = parseInt(item.stock_minimo || 5);
 
-                // Sobrescribir: Verificar si existe
+                // Si aún no hay productoId, se CREA uno nuevo de forma global primero
+                if (!productoId) {
+                    const [result] = await connection.query(
+                        `INSERT INTO productos 
+                        (nombre, codigo_barras, precio_compra, precio_venta, cantidad, stock_minimo, categoria, imagenes, caracteristicas, activo) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '[]', 1)`,
+                        [nombre, item.codigo_barras || null, precioCompra, precioVenta, 0, stockMinimo, 'General']
+                    );
+                    productoId = result.insertId;
+                } else if (item.nombre && item.precio_venta) {
+                    // Update global product basics just in case
+                    await connection.query(
+                        'UPDATE productos SET nombre = ?, precio_compra = ?, precio_venta = ? WHERE id = ?',
+                        [item.nombre, precioCompra, precioVenta, productoId]
+                    );
+                }
+
+                if (!productoId) {
+                    errores.push(`Fallo catastrófico creando el producto: ${item.codigo_barras}`);
+                    continue;
+                }
+
+                // Sobrescribir el inventario de la tienda específica
                 const [existing] = await connection.query(
                     'SELECT id FROM inventario_tienda WHERE tienda_id = ? AND producto_id = ?',
                     [id, productoId]
@@ -419,7 +439,7 @@ router.post('/:id/importar', async (req, res) => {
 
                 if (existing.length > 0) {
                     await connection.query(
-                        'UPDATE inventario_tienda SET cantidad = ?, stock_minimo = ?, activo = 1 WHERE id = ?',
+                        'UPDATE inventario_tienda SET cantidad = cantidad + ?, stock_minimo = ?, activo = 1 WHERE id = ?',
                         [cantidad, stockMinimo, existing[0].id]
                     );
                 } else {
@@ -436,7 +456,7 @@ router.post('/:id/importar', async (req, res) => {
 
         await connection.commit();
         res.json({
-            message: `Proceso completado. ${procesados} productos actualizados.`,
+            message: `Proceso completado. ${procesados} productos vinculados a la tienda.`,
             procesados,
             errores: errores.length > 0 ? errores : null
         });

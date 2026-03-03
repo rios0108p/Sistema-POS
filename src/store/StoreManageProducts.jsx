@@ -226,11 +226,7 @@ const StoreManageProducts = () => {
   };
 
   const handleImportExcel = async (e) => {
-    if (!tiendaSeleccionada) {
-      toast.error("Debes seleccionar una tienda específica para importar existencias");
-      return;
-    }
-
+    // Ya no se restringe a que haya una tienda seleccionada
     const file = e.target.files[0];
     if (!file) return;
 
@@ -248,25 +244,43 @@ const StoreManageProducts = () => {
           return;
         }
 
+        const cleanCurrency = (val) => {
+          if (!val) return 0;
+          if (typeof val === 'number') return val;
+          let str = val.toString().trim();
+          str = str.replace('$', '').replace(/\./g, '').replace(/,/g, '.'); // Transform "$12,00" -> "12.00"
+          const parsed = parseFloat(str);
+          return isNaN(parsed) ? 0 : parsed;
+        };
+
         const items = data.map(row => ({
-          producto_id: row["ID Producto"] || row["id"] || row["producto_id"],
-          codigo_barras: row["Código de Barras"] || row["codigo_barras"] || row["barcode"],
-          cantidad: row["Stock Actual"] || row["cantidad"] || row["stock"] || 0,
-          stock_minimo: row["Stock Mínimo"] || row["stock_minimo"] || 5
-        })).filter(item => item.producto_id || item.codigo_barras);
+          producto_id: row["ID Producto"] || row["id"] || row["producto_id"], // Opcional, sirve para actualizar si el usuario lo descargó antes
+          codigo_barras: row["Código de Barras"] || row["Código"] || row["codigo_barras"] || row["barcode"],
+          nombre: row["Descripción del Producto"] || row["Nombre"] || row["nombre"] || "Producto Importado",
+          precio_compra: cleanCurrency(row["Costo"] || row["Precio Compra"] || row["precio_compra"]),
+          precio_venta: cleanCurrency(row["Precio Venta"] || row["precio_venta"]),
+          cantidad: row["Existencia"] || row["Stock Actual"] || row["cantidad"] || row["stock"] || 0,
+          stock_minimo: row["Inv. Mínimo"] || row["Stock Mínimo"] || row["stock_minimo"] || 5
+        })).filter(item => item.producto_id || item.codigo_barras || item.nombre);
 
         if (items.length === 0) {
-          toast.error("No se encontraron productos válidos en el archivo");
+          toast.error("No se encontraron productos válidos en el archivo (Ej: Faltan columnas 'Código' o 'Descripción')");
           return;
         }
 
-        const loadingToast = toast.loading("Importando datos...");
+        const loadingToast = toast.loading(`Importando ${items.length} productos...`);
         try {
-          const res = await tiendasAPI.importarInventario(tiendaSeleccionada, items);
+          let res;
+          if (tiendaSeleccionada) {
+            res = await tiendasAPI.importarInventario(tiendaSeleccionada, items);
+          } else {
+            res = await productosAPI.importarMasivo(items);
+          }
+
           toast.success(res.message, { id: loadingToast });
           await obtenerProductos();
         } catch (err) {
-          toast.error(`Error en la importación: ${err.message}`, { id: loadingToast });
+          toast.error(`Error en la importación: ${err.message}`, { id: loadingToast, duration: 5000 });
         }
       } catch (error) {
         console.error(error);
@@ -371,13 +385,11 @@ const StoreManageProducts = () => {
           </div>
 
           <div className="flex flex-wrap gap-3 w-full md:w-auto">
-            {tiendaSeleccionada && (
-              <label className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl cursor-pointer transition-all active:scale-95 shadow-lg shadow-indigo-500/20 font-bold uppercase text-[10px] tracking-widest">
-                <Upload size={18} />
-                Importar
-                <input type="file" accept=".xlsx, .xls" className="hidden" onChange={handleImportExcel} />
-              </label>
-            )}
+            <label className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl cursor-pointer transition-all active:scale-95 shadow-lg shadow-indigo-500/20 font-bold uppercase text-[10px] tracking-widest">
+              <Upload size={18} />
+              Importar
+              <input type="file" accept=".xlsx, .xls" className="hidden" onChange={handleImportExcel} />
+            </label>
             <button
               onClick={exportToExcel}
               className="h-[48px] px-6 rounded-2xl flex items-center gap-3 bg-white dark:bg-slate-800 text-emerald-600 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-emerald-50 dark:hover:bg-emerald-900/10 transition-all group"

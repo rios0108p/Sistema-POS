@@ -126,7 +126,6 @@ router.get('/:id', async (req, res) => {
         const [variationRows] = await db.query('SELECT * FROM variaciones WHERE producto_id = ?', [id]);
         const [barcodeRows] = await db.query('SELECT * FROM producto_barcodes WHERE producto_id = ?', [id]);
 
-
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Producto no encontrado' });
         }
@@ -178,6 +177,78 @@ router.get('/:id', async (req, res) => {
     } catch (error) {
         console.error('Error al obtener producto:', error);
         res.status(500).json({ error: 'Error al obtener producto' });
+    }
+});
+
+// Importación masiva global
+router.post('/importar', async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        const { items } = req.body;
+
+        if (!items || !Array.isArray(items)) {
+            throw new Error('Se requiere un array de items');
+        }
+
+        let procesados = 0;
+        let errores = [];
+
+        for (const item of items) {
+            try {
+                let productoId = null;
+
+                // Buscar por código de barras primero
+                if (item.codigo_barras) {
+                    const [prod] = await connection.query('SELECT id FROM productos WHERE codigo_barras = ?', [item.codigo_barras]);
+                    if (prod.length > 0) {
+                        productoId = prod[0].id;
+                    } else {
+                        const [bg] = await connection.query('SELECT producto_id FROM producto_barcodes WHERE codigo_barras = ?', [item.codigo_barras]);
+                        if (bg.length > 0) productoId = bg[0].producto_id;
+                    }
+                }
+
+                const nombre = item.nombre || 'Producto sin nombre';
+                const cantidad = parseInt(item.cantidad || 0);
+                const stockMinimo = parseInt(item.stock_minimo || 5);
+                const precioCompra = parseFloat(item.precio_compra || 0);
+                const precioVenta = parseFloat(item.precio_venta || 0);
+
+                if (productoId) {
+                    // Actualizar global stock
+                    await connection.query(
+                        'UPDATE productos SET cantidad = cantidad + ?, nombre = ?, precio_compra = ?, precio_venta = ? WHERE id = ?',
+                        [cantidad, nombre, precioCompra, precioVenta, productoId]
+                    );
+                } else {
+                    // Crear nuevo producto
+                    const [result] = await connection.query(
+                        `INSERT INTO productos 
+                        (nombre, codigo_barras, precio_compra, precio_venta, cantidad, stock_minimo, categoria, imagenes, caracteristicas, activo) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '[]', 1)`,
+                        [nombre, item.codigo_barras || null, precioCompra, precioVenta, cantidad, stockMinimo, 'General']
+                    );
+                    productoId = result.insertId;
+                }
+                procesados++;
+            } catch (err) {
+                errores.push(`Error procesando item: ${err.message}`);
+            }
+        }
+
+        await connection.commit();
+        res.json({
+            message: `Proceso completado. ${procesados} productos importados al almacén central.`,
+            procesados,
+            errores: errores.length > 0 ? errores : null
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error en importación global:', error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        connection.release();
     }
 });
 

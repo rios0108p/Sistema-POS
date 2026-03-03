@@ -192,6 +192,16 @@ export const productosAPI = {
         return handleResponse(response);
     },
 
+    // Importar masivo global (Excel)
+    importarMasivo: async (items) => {
+        const response = await fetch(`${API_URL}/productos/importar`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ items })
+        });
+        return handleResponse(response);
+    },
+
     // Eliminar producto
     delete: async (id) => {
         const response = await fetch(`${API_URL}/productos/${id}`, {
