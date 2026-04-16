@@ -4,7 +4,7 @@ import { List } from 'react-window';
 
 import { productosAPI, getImageUrl, tiendasAPI } from "../services/api";
 import { Search, Package, RefreshCw, ShoppingCart, ChevronDown, ChevronRight, Store, LayoutGrid, BarChart3, AlertTriangle } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { CURRENCY_SYMBOL } from "../utils/currency";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
 import { FileText, Table as TableIcon } from "lucide-react";
@@ -110,7 +110,18 @@ const Inventario = () => {
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState(user?.rol === 'admin' ? "" : user?.tienda_id);
   const [viewMode, setViewMode] = useState("table"); // "table" or "charts"
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
-  const [busqueda, setBusqueda] = useState(""); // Re-added query state
+  const location = useLocation();
+  const [busqueda, setBusqueda] = useState("");
+  const [urlFilter, setUrlFilter] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('filter') || "";
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const filter = params.get('filter');
+    if (filter) setUrlFilter(filter);
+  }, [location.search]);
 
   // React Query Hooks
   const {
@@ -131,6 +142,42 @@ const Inventario = () => {
   const [motivoAjuste, setMotivoAjuste] = useState("CORRECCION");
   const [notasAjuste, setNotasAjuste] = useState("");
   const [showPinModal, setShowPinModal] = useState(false);
+
+  // Success handler for adjustment
+  const handleConfirmarAjuste = async (authorizedUser) => {
+    try {
+      if (!nuevaCantidad || isNaN(nuevaCantidad)) {
+        toast.error("Ingresa una cantidad válida");
+        return;
+      }
+
+      if (user?.rol === 'admin' && !tiendaSeleccionada) {
+        toast.error("Selecciona una sucursal para realizar el ajuste");
+        return;
+      }
+
+      const loadingToast = toast.loading("Registrando ajuste...");
+      await realizarAjuste.mutateAsync({
+        producto_id: ajusteModal.producto.id,
+        variacion_id: ajusteModal.variacion?.id,
+        tienda_id: user?.rol === 'admin' ? tiendaSeleccionada : user?.tienda_id,
+        cantidad_nueva: parseInt(nuevaCantidad),
+        motivo: motivoAjuste,
+        notas: notasAjuste,
+        usuario_id: authorizedUser?.id || user?.id
+      });
+
+      const authorName = authorizedUser?.nombre || authorizedUser?.username || user?.nombre || 'Usuario';
+      toast.success(`Ajuste registrado por: ${authorName}`, { id: loadingToast });
+
+      setAjusteModal({ open: false, producto: null, variacion: null });
+      setNuevaCantidad("");
+      setNotasAjuste("");
+      setShowPinModal(false);
+    } catch (error) {
+      toast.error(error.message || "Error al ajustar inventario");
+    }
+  };
 
   const searchInputRef = useRef(null);
 
@@ -153,9 +200,19 @@ const Inventario = () => {
   }, [refetchProductos]);
 
 
-  const productosFiltrados = productos.filter((p) =>
-    p.nombre.toLowerCase().includes(busqueda.toLowerCase())
-  );
+  const productosFiltrados = useMemo(() => {
+    let base = productos.filter((p) =>
+      p.nombre.toLowerCase().includes(busqueda.toLowerCase())
+    );
+
+    if (urlFilter === 'bajoStock') {
+      base = base.filter(p => p.stockReal <= (p.stock_minimo || 5));
+    } else if (urlFilter === 'agotado') {
+      base = base.filter(p => p.stockReal <= 0);
+    }
+
+    return base;
+  }, [productos, busqueda, urlFilter]);
 
   /* Removed toggleExpandir in favor of Modal */
 
@@ -335,11 +392,17 @@ const Inventario = () => {
             <div className="text-2xl font-bold text-emerald-500">{currency}{stats.inversion.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
           </div>
         )}
-        <div className="card-standard p-5">
+        <div
+          className={`card-standard p-5 cursor-pointer hover:scale-[1.02] transition-all ${urlFilter === 'bajoStock' ? 'ring-2 ring-amber-500 shadow-amber-500/20' : ''}`}
+          onClick={() => setUrlFilter(urlFilter === 'bajoStock' ? "" : 'bajoStock')}
+        >
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Bajo Stock</div>
           <div className="text-2xl font-bold text-amber-500 flex items-center gap-2">{stats.bajoStock} <AlertTriangle size={18} /></div>
         </div>
-        <div className="card-standard p-5">
+        <div
+          className={`card-standard p-5 cursor-pointer hover:scale-[1.02] transition-all ${urlFilter === 'agotado' ? 'ring-2 ring-rose-500 shadow-rose-500/20' : ''}`}
+          onClick={() => setUrlFilter(urlFilter === 'agotado' ? "" : 'agotado')}
+        >
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Agotados</div>
           <div className="text-2xl font-bold text-rose-500">{stats.agotados}</div>
         </div>
@@ -527,10 +590,17 @@ const Inventario = () => {
                 Cancelar
               </button>
               <button
-                onClick={() => setShowPinModal(true)}
+                onClick={() => {
+                  if (user?.rol === 'admin') {
+                    // Bypas PIN for admins
+                    handleConfirmarAjuste();
+                  } else {
+                    setShowPinModal(true);
+                  }
+                }}
                 className="btn-primary flex-1"
               >
-                Confirmar con PIN
+                {user?.rol === 'admin' ? 'Confirmar Ajuste' : 'Confirmar con PIN'}
               </button>
             </div>
           </div>
@@ -541,29 +611,7 @@ const Inventario = () => {
       <PinValidationModal
         isOpen={showPinModal}
         onClose={() => setShowPinModal(false)}
-        onSuccess={async (authorizedUser) => {
-          try {
-            const loadingToast = toast.loading("Registrando ajuste...");
-            await realizarAjuste.mutateAsync({
-              producto_id: ajusteModal.producto.id,
-              variacion_id: ajusteModal.variacion?.id,
-              tienda_id: user?.rol === 'admin' ? tiendaSeleccionada : user?.tienda_id,
-              cantidad_nueva: parseInt(nuevaCantidad),
-              motivo: motivoAjuste,
-              notas: notasAjuste,
-              usuario_id: authorizedUser?.id || user?.id
-            });
-            toast.success(`Ajuste autorizado por: ${authorizedUser?.nombre || authorizedUser?.username || 'Usuario'}`, { id: loadingToast });
-            setAjusteModal({ open: false, producto: null, variacion: null });
-            setNuevaCantidad("");
-            setNotasAjuste("");
-            // cargarInventario(); // Handled automatically by query invalidation
-          } catch (error) {
-            toast.error(error.message || "Error al ajustar inventario");
-          } finally {
-            setShowPinModal(false);
-          }
-        }}
+        onSuccess={handleConfirmarAjuste}
         actionName="Ajustar Inventario"
       />
       {/* Modal de Variaciones */}
@@ -579,7 +627,7 @@ const Inventario = () => {
                 onClick={() => setVariacionesModal({ open: false, producto: null })}
                 className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-lg transition-colors"
               >
-                <Trash2 size={20} className="rotate-45" />
+                <X size={20} />
               </button>
             </div>
 

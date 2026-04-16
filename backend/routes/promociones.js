@@ -14,6 +14,8 @@ const migrate = async () => {
                 precio_combo DECIMAL(10, 2) NOT NULL,
                 tienda_id INT,
                 activo BOOLEAN DEFAULT TRUE,
+                fecha_inicio DATE NULL,
+                fecha_fin DATE NULL,
                 fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
@@ -26,6 +28,14 @@ const migrate = async () => {
                 FOREIGN KEY (promocion_id) REFERENCES promociones(id) ON DELETE CASCADE
             )
         `);
+        // Check for missing columns in existing table
+        const [columns] = await db.query('SHOW COLUMNS FROM promociones');
+        const hasInicio = columns.some(c => c.Field === 'fecha_inicio');
+        if (!hasInicio) {
+            await db.query('ALTER TABLE promociones ADD COLUMN fecha_inicio DATE NULL AFTER activo');
+            await db.query('ALTER TABLE promociones ADD COLUMN fecha_fin DATE NULL AFTER fecha_inicio');
+            console.log('✅ Columnas de fecha añadidas a promociones');
+        }
     } catch (err) {
         console.error('Error migrando promociones:', err);
     }
@@ -91,6 +101,42 @@ router.post('/', async (req, res) => {
         await connection.rollback();
         console.error('Error creando promoción:', error);
         res.status(500).json({ error: 'Error al crear la promoción' });
+    } finally {
+        connection.release();
+    }
+});
+
+// Actualizar promoción
+router.put('/:id', async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        const { id } = req.params;
+        const { nombre, descripcion, precio_combo, tienda_id, productos } = req.body;
+
+        // Actualizar tabla principal
+        await connection.query(`
+            UPDATE promociones 
+            SET nombre = ?, descripcion = ?, precio_combo = ?, tienda_id = ?
+            WHERE id = ?
+        `, [nombre, descripcion, precio_combo, tienda_id || null, id]);
+
+        // Sincronizar productos: Eliminar viejos e insertar los nuevos
+        await connection.query('DELETE FROM promocion_productos WHERE promocion_id = ?', [id]);
+
+        for (const prod of productos) {
+            await connection.query(`
+                INSERT INTO promocion_productos (promocion_id, producto_id, cantidad)
+                VALUES (?, ?, ?)
+            `, [id, prod.producto_id, prod.cantidad]);
+        }
+
+        await connection.commit();
+        res.json({ message: 'Promoción actualizada correctamente' });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error actualizando promoción:', error);
+        res.status(500).json({ error: 'Error al actualizar la promoción' });
     } finally {
         connection.release();
     }

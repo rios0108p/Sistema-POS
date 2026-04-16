@@ -1,8 +1,11 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import compression from 'compression';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+// Importar middlewares de seguridad
+import { verifyToken, isAdmin } from './middleware/auth.js';
 
 // Importar rutas
 import productosRoutes from './routes/productos.js';
@@ -24,7 +27,7 @@ import ajustesRoutes from './routes/ajustes.js';
 import gastosRoutes from './routes/gastos.js';
 
 
-dotenv.config();
+// dotenv ya se cargó arriba
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +36,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middlewares
+app.use(compression()); // Comprimir respuestas Gzip
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -45,30 +49,32 @@ app.use((req, res, next) => {
     console.log(`📡 [${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
 });
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Servir archivos estáticos (imágenes)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // retrocompatibilidad
+app.use('/api/downloads', express.static(path.join(__dirname, 'downloads')));
 
 // Rutas API
 app.use('/api/auth', authRoutes);
-app.use('/api/productos', productosRoutes);
-app.use('/api/categorias', categoriasRoutes);
-app.use('/api/ventas', ventasRoutes);
-app.use('/api/compras', comprasRoutes);
-app.use('/api/pedidos', pedidosRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/proveedores', proveedoresRoutes);
-app.use('/api/clientes', clientesRoutes);
-app.use('/api/usuarios', usuariosRoutes);
-app.use('/api/configuracion', configuracionRoutes);
-app.use('/api/turnos', turnosRoutes);
-app.use('/api/tiendas', tiendasRoutes);
-app.use('/api/movimientos', movimientosRoutes);
-app.use('/api/promociones', promocionesRoutes);
-app.use('/api/ajustes', ajustesRoutes);
-app.use('/api/gastos', gastosRoutes);
+app.use('/api/productos', verifyToken, productosRoutes);
+app.use('/api/categorias', verifyToken, categoriasRoutes);
+app.use('/api/ventas', verifyToken, ventasRoutes);
+app.use('/api/compras', verifyToken, comprasRoutes);
+app.use('/api/pedidos', verifyToken, pedidosRoutes);
+app.use('/api/dashboard', verifyToken, dashboardRoutes);
+app.use('/api/proveedores', verifyToken, proveedoresRoutes);
+app.use('/api/clientes', verifyToken, clientesRoutes);
+app.use('/api/usuarios', verifyToken, isAdmin, usuariosRoutes);
+app.use('/api/configuracion', verifyToken, isAdmin, configuracionRoutes);
+app.use('/api/turnos', verifyToken, turnosRoutes);
+app.use('/api/tiendas', verifyToken, isAdmin, tiendasRoutes);
+app.use('/api/movimientos', verifyToken, movimientosRoutes);
+app.use('/api/promociones', verifyToken, promocionesRoutes);
+app.use('/api/ajustes', verifyToken, ajustesRoutes);
+app.use('/api/gastos', verifyToken, gastosRoutes);
 
 
 // Ruta de prueba básica
@@ -97,7 +103,7 @@ app.get('/api/db-check', async (req, res) => {
             status: 'ERROR',
             message: 'No se pudo conectar a la base de datos',
             error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 });
@@ -144,9 +150,7 @@ export function startServer(port = 3001) {
     }
 }
 
-// Iniciar automáticamente si se ejecuta con node directamente
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    startServer(PORT);
-}
+// Iniciar automáticamente el servidor
+startServer(PORT);
 
 export default app;

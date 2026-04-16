@@ -3,9 +3,11 @@ import { HashRouter as Router, Routes, Route, useLocation, Navigate, useNavigate
 import { Toaster } from "react-hot-toast";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
+import { NetworkProvider } from "./context/NetworkContext";
 import ProtectedRoute from "./Components/ProtectedRoute";
 import ScrollToTop from "./Components/Common/ScrollToTop";
 import Loading from "./Components/Common/Loading";
+import ElectronTitleBar from "./Components/ElectronTitleBar";
 import Login from "./Pages/Login"; // Keep Login static for faster initial render
 
 // Lazy Imports for Code Splitting
@@ -47,7 +49,7 @@ function AppContent() {
     }
 
     if (storeConfig) {
-      document.title = storeConfig.nombre_tienda || "Sistema POS";
+      document.title = "TENDO-POS";
 
       // Update favicon
       let link = document.querySelector("link[rel~='icon']");
@@ -59,6 +61,37 @@ function AppContent() {
       link.href = storeConfig.logoUrl || "/favicon.ico";
     }
   }, [storeConfig, user, location.pathname]);
+
+  useEffect(() => {
+    const handleGlobalShortcuts = (e) => {
+      // Solo actuar si el usuario está autenticado y en la ruta de la tienda
+      if (!user || !location.pathname.startsWith('/store')) return;
+
+      // F1: Punto de Venta
+      if (e.key === 'F1') {
+        e.preventDefault();
+        navigate('/store/ventas');
+      }
+      // F2: Clientes
+      if (e.key === 'F2') {
+        e.preventDefault();
+        navigate('/store/manage-customers');
+      }
+      // F3: Catálogo / Productos
+      if (e.key === 'F3') {
+        e.preventDefault();
+        navigate('/store/manage-product');
+      }
+      // F4: Inventario
+      if (e.key === 'F4') {
+        e.preventDefault();
+        navigate('/store/inventarios');
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalShortcuts);
+    return () => window.removeEventListener('keydown', handleGlobalShortcuts);
+  }, [user, location.pathname, navigate]);
 
 
   return (
@@ -77,23 +110,23 @@ function AppContent() {
 
             {/* Rutas del sistema POS */}
             <Route path="/store" element={<ProtectedRoute><StoreLayout /></ProtectedRoute>}>
-              <Route index element={<Dashboard />} />
-              <Route path="add-product" element={<ProtectedRoute allowedRoles={['admin']}><StoreAddProduct /></ProtectedRoute>} />
-              <Route path="manage-product" element={<ProtectedRoute allowedRoles={['admin']}><StoreManageProducts /></ProtectedRoute>} />
-              <Route path="orders" element={<StoreOrders />} />
-              <Route path="compras" element={<ProtectedRoute allowedRoles={['admin', 'vendedor']}><RegistrarCompras /></ProtectedRoute>} />
-              <Route path="ventas" element={<RegistrarVentas />} />
-              <Route path="inventarios" element={<Inventario />} />
-              <Route path="manage-suppliers" element={<ProtectedRoute allowedRoles={['admin']}><StoreManageSuppliers /></ProtectedRoute>} />
-              <Route path="manage-customers" element={<ManageCustomers />} />
-              <Route path="users" element={<ProtectedRoute allowedRoles={['admin']}><ManageUsers /></ProtectedRoute>} />
+              <Route index element={<ProtectedRoute requiredPermission="dashboard"><Dashboard /></ProtectedRoute>} />
+              <Route path="add-product" element={<ProtectedRoute requiredPermission="inventario"><StoreAddProduct /></ProtectedRoute>} />
+              <Route path="manage-product" element={<ProtectedRoute requiredPermission="inventario"><StoreManageProducts /></ProtectedRoute>} />
+              <Route path="orders" element={<ProtectedRoute requiredPermission="ventas"><StoreOrders /></ProtectedRoute>} />
+              <Route path="compras" element={<ProtectedRoute requiredPermission="ventas"><RegistrarCompras /></ProtectedRoute>} />
+              <Route path="ventas" element={<ProtectedRoute requiredPermission="ventas"><RegistrarVentas /></ProtectedRoute>} />
+              <Route path="inventarios" element={<ProtectedRoute requiredPermission="ventas"><Inventario /></ProtectedRoute>} />
+              <Route path="manage-suppliers" element={<ProtectedRoute requiredPermission="inventario"><StoreManageSuppliers /></ProtectedRoute>} />
+              <Route path="manage-customers" element={<ProtectedRoute requiredPermission="clientes"><ManageCustomers /></ProtectedRoute>} />
+              <Route path="users" element={<ProtectedRoute requiredPermission="usuarios"><ManageUsers /></ProtectedRoute>} />
               <Route path="profile" element={<ProfileSettings />} />
-              <Route path="settings" element={<ProtectedRoute allowedRoles={['admin']}><StoreSettings /></ProtectedRoute>} />
-              <Route path="corte-caja" element={<ProtectedRoute allowedRoles={['admin']}><CorteCaja /></ProtectedRoute>} />
-              <Route path="tiendas" element={<ProtectedRoute allowedRoles={['admin']}><ManageTiendas /></ProtectedRoute>} />
-              <Route path="promociones" element={<ProtectedRoute allowedRoles={['admin']}><ManagePromociones /></ProtectedRoute>} />
-              <Route path="gastos" element={<ProtectedRoute allowedRoles={['admin']}><ManageGastos /></ProtectedRoute>} />
-              <Route path="history" element={<ProtectedRoute allowedRoles={['admin', 'vendedor']}><MovementHistory /></ProtectedRoute>} />
+              <Route path="settings" element={<ProtectedRoute requiredPermission="configuracion"><StoreSettings /></ProtectedRoute>} />
+              <Route path="corte-caja" element={<ProtectedRoute requiredPermission="ventas"><CorteCaja /></ProtectedRoute>} />
+              <Route path="tiendas" element={<ProtectedRoute requiredPermission="tiendas"><ManageTiendas /></ProtectedRoute>} />
+              <Route path="promociones" element={<ProtectedRoute requiredPermission="configuracion"><ManagePromociones /></ProtectedRoute>} />
+              <Route path="gastos" element={<ProtectedRoute requiredPermission="gastos"><ManageGastos /></ProtectedRoute>} />
+              <Route path="history" element={<ProtectedRoute requiredPermission="ventas"><MovementHistory /></ProtectedRoute>} />
             </Route>
           </Routes>
         </Suspense>
@@ -108,7 +141,10 @@ function App() {
     <Router>
       <ThemeProvider>
         <AuthProvider>
-          <AppContent />
+          <NetworkProvider>
+            <ElectronTitleBar />
+            <AppContent />
+          </NetworkProvider>
         </AuthProvider>
       </ThemeProvider>
     </Router>

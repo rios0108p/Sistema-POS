@@ -128,7 +128,7 @@ router.get('/', async (req, res) => {
         const [profitData] = await db.query(`
             SELECT 
                 COALESCE(SUM(dv.subtotal), 0) as revenue,
-                COALESCE(SUM(p.precio_compra * dv.cantidad), 0) as cost
+                COALESCE(SUM(COALESCE(dv.costo_unitario, p.precio_compra) * dv.cantidad), 0) as cost
             FROM ventas v
             JOIN detalle_ventas dv ON v.id = dv.venta_id
             JOIN productos p ON dv.producto_id = p.id
@@ -140,7 +140,7 @@ router.get('/', async (req, res) => {
         const [prevProfit] = await db.query(`
             SELECT 
                 COALESCE(SUM(dv.subtotal), 0) as revenue,
-                COALESCE(SUM(p.precio_compra * dv.cantidad), 0) as cost
+                COALESCE(SUM(COALESCE(dv.costo_unitario, p.precio_compra) * dv.cantidad), 0) as cost
             FROM ventas v
             JOIN detalle_ventas dv ON v.id = dv.venta_id
             JOIN productos p ON dv.producto_id = p.id
@@ -307,7 +307,7 @@ router.get('/', async (req, res) => {
         };
 
         // Pedidos pendientes (Solicitudes)
-        const [pedidosPendientesCount] = await db.query('SELECT COUNT(*) as total FROM pedidos WHERE estado = "PENDIENTE"');
+        const [pedidosPendientesCount] = await db.query('SELECT COUNT(*) as total FROM pedidos WHERE estado = "PENDIENTE" AND (fecha_programada IS NULL OR fecha_programada <= CURDATE())');
         // Total de tickets (número máximo de ticket)
         const [tickets] = await db.query('SELECT COUNT(*) as total_tickets FROM ventas');
         const totalTickets = tickets[0].total_tickets;

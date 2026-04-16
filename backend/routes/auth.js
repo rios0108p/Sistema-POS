@@ -74,11 +74,14 @@ router.post('/login', async (req, res) => {
                 id: user.id,
                 username: user.nombre_usuario,
                 rol: user.rol,
-                tienda_id: user.tienda_id
+                tienda_id: user.tienda_id,
+                permisos: user.permisos || null
             },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
+
+        const permisosParsed = (user.permisos && typeof user.permisos === 'string') ? JSON.parse(user.permisos) : (user.permisos || null);
 
         res.json({
             token,
@@ -88,7 +91,8 @@ router.post('/login', async (req, res) => {
                 rol: user.rol,
                 tienda_id: user.tienda_id,
                 tienda_nombre: user.tienda_nombre,
-                turno_trabajo: user.turno_trabajo
+                turno_trabajo: user.turno_trabajo,
+                permisos: permisosParsed
             },
             turnoActivo
         });
@@ -114,17 +118,18 @@ router.get('/verify', async (req, res) => {
 
 // Actualizar Perfil propio
 router.put('/update-profile', async (req, res) => {
-    const { id, username, password } = req.body;
+    const userId = req.user.id;
+    const { username, password } = req.body;
 
     try {
         let query = 'UPDATE usuarios SET nombre_usuario = ? WHERE id = ?';
-        let params = [username, id];
+        let params = [username, userId];
 
         if (password && password.trim() !== '') {
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(password, salt);
             query = 'UPDATE usuarios SET nombre_usuario = ?, password = ? WHERE id = ?';
-            params = [username, hashedPassword, id];
+            params = [username, hashedPassword, userId];
         }
 
         await db.query(query, params);

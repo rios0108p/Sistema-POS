@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { authAPI } from "../services/api";
+import { authAPI, movimientosAPI } from "../services/api";
 import { toast } from "react-hot-toast";
+import { CURRENCY_SYMBOL } from "../utils/currency";
 import {
     User as UserIcon, Shield as ShieldIcon, Lock as LockIcon,
     Clock as ClockIcon, History as HistoryIcon, Key as KeyIcon,
     RefreshCw as RefreshIcon, CheckCircle as CheckIcon,
-    X, Eye, EyeOff
+    TrendingUp as TrendingUpIcon, X, Eye, EyeOff,
+    Monitor as MonitorIcon, Download as DownloadIcon
 } from "lucide-react";
-import { InstallPWAButton } from "../components/common/InstallPWAButton";
 
 export default function ProfileSettings() {
     const { user, updateUser } = useAuth();
@@ -18,6 +19,25 @@ export default function ProfileSettings() {
         username: user?.username || "",
         password: ""
     });
+    const [stats, setStats] = useState({ total: 0, count: 0 });
+    const currency = CURRENCY_SYMBOL;
+
+    useEffect(() => {
+        const fetchDailyStats = async () => {
+            try {
+                // Fecha local correcta (no UTC) para Cancún GMT-5/GMT-6
+                const d = new Date();
+                const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                const data = await movimientosAPI.getAll(today, today, "", "", user.id);
+                const sales = data.filter(m => m.tipo === 'venta' && m.estado !== 'CANCELADA');
+                const total = sales.reduce((acc, s) => acc + Number(s.monto), 0);
+                setStats({ total, count: sales.length });
+            } catch (error) {
+                console.error("Error fetching user stats:", error);
+            }
+        };
+        if (user?.id) fetchDailyStats();
+    }, [user]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -46,7 +66,6 @@ export default function ProfileSettings() {
                         </h1>
                         <p className="text-xs sm:text-sm text-slate-400 mt-1 font-bold">Gestión de identidad y parámetros de acceso restringido</p>
                     </div>
-                    <InstallPWAButton />
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -83,6 +102,28 @@ export default function ProfileSettings() {
                             </div>
                         </div>
 
+                        <div className="card-standard p-8 bg-gradient-to-br from-indigo-600 to-purple-700 text-white border-none shadow-indigo-500/20">
+                            <h4 className="text-[10px] font-black opacity-60 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
+                                <TrendingUpIcon size={14} /> DESEMPEÑO HOY
+                            </h4>
+                            <div className="space-y-6">
+                                <div>
+                                    <p className="text-3xl font-black tracking-tighter">{currency}{stats.total.toFixed(2)}</p>
+                                    <p className="text-[9px] font-bold uppercase opacity-60 mt-1 tracking-widest">Ventas Totales (Neto)</p>
+                                </div>
+                                <div className="flex justify-between items-end pt-4 border-t border-white/10">
+                                    <div>
+                                        <p className="text-xl font-black">{stats.count}</p>
+                                        <p className="text-[8px] font-bold uppercase opacity-60 tracking-widest">Tickets</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xl font-black">{stats.count > 0 ? (stats.total / stats.count).toFixed(2) : '0.00'}</p>
+                                        <p className="text-[8px] font-bold uppercase opacity-60 tracking-widest">Promedio</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="card-standard p-8">
                             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
                                 <HistoryIcon size={14} className="text-indigo-500" /> HISTORIAL DE ACCESO
@@ -94,7 +135,12 @@ export default function ProfileSettings() {
                                     </div>
                                     <div>
                                         <p className="text-[11px] font-black uppercase text-slate-700 dark:text-slate-200 tracking-tight">Sesión Actual</p>
-                                        <p className="text-[9px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">Hace 2 horas • IP: Protegida</p>
+                                        <p className="text-[9px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">
+                                            {user?.sessionStart
+                                                ? `Iniciada hace ${Math.floor((new Date() - new Date(user.sessionStart)) / 60000)} min`
+                                                : 'Sesión activa'
+                                            } • IP: Protegida
+                                        </p>
                                     </div>
                                 </div>
                             </div>
@@ -169,20 +215,30 @@ export default function ProfileSettings() {
                                 </div>
                             </form>
                         </div>
+                        
+                        {/* Desktop App Download Card */}
+                        <div className="card-standard p-10 mt-8 flex flex-col md:flex-row items-center justify-between gap-6 border border-indigo-100 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 shadow-xl shadow-indigo-500/5">
+                            <div className="flex items-center gap-5">
+                                <div className="w-16 h-16 bg-indigo-500 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/30">
+                                    <MonitorIcon size={32} className="text-white" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-black text-slate-800 dark:text-white uppercase tracking-tight">App Nativa de Escritorio</h3>
+                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest mt-1">Versión Windows Portable (.zip) - Modo Offline</p>
+                                </div>
+                            </div>
+                            <a 
+                                href="/TendoPOS-Portable.zip" 
+                                download="TendoPOS-Portable.zip"
+                                className="flex items-center justify-center gap-3 px-8 py-4 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl shadow-lg transition-all hover:-translate-y-1 font-black text-xs uppercase tracking-widest min-w-[200px]"
+                            >
+                                <DownloadIcon size={18} /> Descargar Portable
+                            </a>
+                        </div>
                     </div>
                 </div>
 
-                <div className="mt-8 p-6 bg-blue-50/50 dark:bg-indigo-900/10 border border-blue-100 dark:border-indigo-800/30 rounded-3xl flex flex-col sm:flex-row gap-5 items-center">
-                    <div className="w-14 h-14 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-center text-indigo-500 shrink-0 shadow-sm border dark:border-slate-700/50">
-                        <ShieldIcon size={28} />
-                    </div>
-                    <div>
-                        <h5 className="text-[11px] font-black uppercase text-indigo-700 dark:text-indigo-400 tracking-widest mb-1 shadow-sm">Protocolo de Protección de Datos v4</h5>
-                        <p className="text-xs font-bold text-slate-500 dark:text-slate-400 leading-relaxed max-w-2xl">
-                            Al modificar tu identificador comercial de acceso, el sistema aplicará un <b>cierrer de sesión forzado</b> por motivos de integridad. Deberás reautenticarte con las nuevas credenciales vinculadas a tu perfil.
-                        </p>
-                    </div>
-                </div>
+
             </div>
         </div>
     );

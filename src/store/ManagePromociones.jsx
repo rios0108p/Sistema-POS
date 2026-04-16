@@ -1,9 +1,12 @@
 import { useState, useEffect } from "react";
 import { promocionesAPI, productosAPI, tiendasAPI } from "../services/api";
 import { toast } from "react-hot-toast";
-import { Plus, Trash2, Store, Tag, Package, X, ChevronRight, Info } from "lucide-react";
+import { Plus, Trash2, Store, Tag, Package, X, ChevronRight, Info, Edit3, ShieldOff } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
 
 const ManagePromociones = () => {
+    const { user } = useAuth();
+    const isAdmin = user?.rol === 'admin';
     const [promociones, setPromociones] = useState([]);
     const [productos, setProductos] = useState([]);
     const [tiendas, setTiendas] = useState([]);
@@ -11,6 +14,7 @@ const ManagePromociones = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
 
     // Form states
+    const [editingPromo, setEditingPromo] = useState(null);
     const [formData, setFormData] = useState({
         nombre: "",
         descripcion: "",
@@ -75,13 +79,19 @@ const ManagePromociones = () => {
         }
 
         try {
-            await promocionesAPI.create(formData);
-            toast.success("Promoción creada correctamente");
+            if (editingPromo) {
+                await promocionesAPI.update(editingPromo.id, formData);
+                toast.success("Promoción actualizada correctamente");
+            } else {
+                await promocionesAPI.create(formData);
+                toast.success("Promoción creada correctamente");
+            }
             setIsModalOpen(false);
+            setEditingPromo(null);
             setFormData({ nombre: "", descripcion: "", precio_combo: "", tienda_id: "", productos: [] });
             loadData();
         } catch (error) {
-            toast.error("Error al crear promoción");
+            toast.error(editingPromo ? "Error al actualizar" : "Error al crear");
         }
     };
 
@@ -98,6 +108,17 @@ const ManagePromociones = () => {
 
     return (
         <div className="p-4 sm:p-6 mb-28 bg-slate-50/50 dark:bg-slate-900/50 min-h-screen transition-all duration-300">
+            {/* Access Guard */}
+            {!isAdmin ? (
+                <div className="flex flex-col items-center justify-center h-[60vh] gap-6">
+                    <ShieldOff size={64} className="text-slate-200 dark:text-slate-700" />
+                    <div className="text-center">
+                        <h2 className="text-xl font-black text-slate-400 uppercase tracking-widest mb-2">Acceso Restringido</h2>
+                        <p className="text-sm text-slate-400 font-bold">Solo administradores pueden gestionar promociones.</p>
+                    </div>
+                </div>
+            ) : (
+            <>
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
                 <div>
@@ -163,12 +184,30 @@ const ManagePromociones = () => {
                                         <Store size={12} />
                                         {tiendas.find(t => t.id == promo.tienda_id)?.nombre || "Todas las Tiendas"}
                                     </div>
-                                    <button
-                                        onClick={() => handleDelete(promo.id)}
-                                        className="p-2.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 rounded-xl transition-all opacity-0 group-hover:opacity-100 active:scale-90"
-                                    >
-                                        <Trash2 size={18} />
-                                    </button>
+                                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                        <button
+                                            onClick={() => {
+                                                setEditingPromo(promo);
+                                                setFormData({
+                                                    nombre: promo.nombre,
+                                                    descripcion: promo.descripcion || "",
+                                                    precio_combo: promo.precio_combo,
+                                                    tienda_id: promo.tienda_id || "",
+                                                    productos: promo.productos || []
+                                                });
+                                                setIsModalOpen(true);
+                                            }}
+                                            className="p-2.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/10 rounded-xl transition-all active:scale-90"
+                                        >
+                                            <Edit3 size={18} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(promo.id)}
+                                            className="p-2.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 rounded-xl transition-all active:scale-90"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -185,7 +224,7 @@ const ManagePromociones = () => {
                                 <h2 className="text-2xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter leading-none">Vincular Nueva Promo</h2>
                                 <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mt-1.5">Define productos y precio final del combo</p>
                             </div>
-                            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-rose-500 transition-all"><X size={24} /></button>
+                            <button onClick={() => { setIsModalOpen(false); setEditingPromo(null); }} className="text-slate-400 hover:text-rose-500 transition-all"><X size={24} /></button>
                         </div>
 
                         <form onSubmit={handleSubmit} className="p-10 space-y-8 overflow-y-auto flex-1 custom-scrollbar">
@@ -207,8 +246,8 @@ const ManagePromociones = () => {
                                             type="number" step="0.01" required
                                             className="input-standard pl-10 h-[52px] font-black text-amber-600 text-xl"
                                             placeholder="0.00"
-                                            value={formData.precio_combo}
-                                            onChange={e => setFormData({ ...formData, precio_combo: e.target.value })}
+                                            value={formData.precio_combo || ""}
+                                            onChange={e => setFormData({ ...formData, precio_combo: e.target.value === "" ? "" : e.target.value })}
                                         />
                                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-400 font-bold text-lg">$</span>
                                     </div>
@@ -258,8 +297,8 @@ const ManagePromociones = () => {
                                         <div className="col-span-8 md:col-span-3">
                                             <input
                                                 type="number" className="input-standard h-[48px] text-center font-bold"
-                                                value={selectedQty}
-                                                onChange={e => setSelectedQty(e.target.value)}
+                                                value={selectedQty || ""}
+                                                onChange={e => setSelectedQty(e.target.value === "" ? "" : e.target.value)}
                                                 min="1"
                                                 placeholder="Cant."
                                             />
@@ -275,7 +314,7 @@ const ManagePromociones = () => {
 
                                 <div className="space-y-2">
                                     {formData.productos.length === 0 ? (
-                                        <div className="text-center py-6 opacity-40 text-[10px] font-bold uppercase tracking-widest italic">Vincula al menos 2 ítems para este combo</div>
+                                        <div className="text-center py-6 opacity-40 text-[10px] font-bold uppercase tracking-widest italic">Vincula al menos 1 ítem base para este combo</div>
                                     ) : (
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                             {formData.productos.map((p, idx) => (
@@ -302,7 +341,7 @@ const ManagePromociones = () => {
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setIsModalOpen(false)}
+                                onClick={() => { setIsModalOpen(false); setEditingPromo(null); }}
                                 className="btn-secondary w-full justify-center"
                             >
                                 Cancelar
@@ -310,6 +349,8 @@ const ManagePromociones = () => {
                         </div>
                     </div>
                 </div>
+            )}
+            </>
             )}
         </div>
     );

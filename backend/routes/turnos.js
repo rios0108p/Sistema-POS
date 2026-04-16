@@ -5,19 +5,27 @@ const router = express.Router();
 
 // Obtener todos los turnos (para admin) con filtros
 router.get('/', async (req, res) => {
-    const { range, tienda_id } = req.query; // day, week, month, year, tienda_id
+    const { range, tienda_id, startDate, endDate, usuario_id } = req.query; // day, week, month, year, custom, tienda_id, usuario_id
 
     let dateFilter = '';
     let params = [];
 
     if (range === 'day') {
-        dateFilter = "AND DATE(t.fecha_apertura) = CURDATE()";
+        if (startDate) {
+            dateFilter = "AND DATE(t.fecha_apertura) = ?";
+            params.push(startDate);
+        } else {
+            dateFilter = "AND DATE(t.fecha_apertura) = CURDATE()";
+        }
     } else if (range === 'week') {
         dateFilter = "AND t.fecha_apertura >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)";
     } else if (range === 'month') {
         dateFilter = "AND MONTH(t.fecha_apertura) = MONTH(NOW()) AND YEAR(t.fecha_apertura) = YEAR(NOW())";
     } else if (range === 'year') {
         dateFilter = "AND YEAR(t.fecha_apertura) = YEAR(NOW())";
+    } else if (range === 'custom' && startDate && endDate) {
+        dateFilter = "AND t.fecha_apertura BETWEEN ? AND ?";
+        params.push(`${startDate} 00:00:00`, `${endDate} 23:59:59`);
     }
 
     let tiendaFilter = '';
@@ -26,13 +34,20 @@ router.get('/', async (req, res) => {
         params.push(tienda_id);
     }
 
+    let usuarioFilter = '';
+    if (usuario_id) {
+        usuarioFilter = 'AND t.usuario_id = ?';
+        params.push(usuario_id);
+    }
+
     try {
         const [rows] = await db.query(`
             SELECT t.*, u.turno_trabajo as shift_name,
-                   (SELECT COUNT(*) FROM ventas WHERE turno_id = t.id) as num_ventas
+                   (SELECT COUNT(*) FROM ventas WHERE turno_id = t.id AND estado = 'COMPLETADA') as num_ventas,
+                   (SELECT COALESCE(SUM(total), 0) FROM ventas WHERE turno_id = t.id AND estado = 'COMPLETADA') as total_actual
             FROM turnos t
             LEFT JOIN usuarios u ON t.usuario_id = u.id
-            WHERE 1=1 ${dateFilter} ${tiendaFilter}
+            WHERE 1=1 ${dateFilter} ${tiendaFilter} ${usuarioFilter}
             ORDER BY t.fecha_apertura DESC
             LIMIT 100
         `, params);
@@ -79,8 +94,13 @@ router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Obtener turno
-        const [turno] = await db.query('SELECT * FROM turnos WHERE id = ?', [id]);
+        // Obtener turno con el nombre del turno de trabajo del usuario
+        const [turno] = await db.query(`
+            SELECT t.*, u.turno_trabajo as shift_name
+            FROM turnos t
+            LEFT JOIN usuarios u ON t.usuario_id = u.id
+            WHERE t.id = ?
+        `, [id]);
         if (turno.length === 0) {
             return res.status(404).json({ error: 'Turno no encontrado' });
         }
@@ -116,53 +136,88 @@ router.get('/:id', async (req, res) => {
             GROUP BY vp.metodo
         `, [id]);
 
-        // Obtener resumen de MAYOREO
-        const [resumenMayoreo] = await db.query(`
-            SELECT COALESCE(SUM(total), 0) as total_mayoreo
+        // Obtener resumen de ventas (Mayoreo, Cancelados, etc) en una sola consulta
+        const [resumenVentas] = await db.query(`
+            SELECT 
+                COALESCE(SUM(CASE WHEN es_mayoreo = 1 AND estado = 'COMPLETADA' AND tipo = 'VENTA' THEN total ELSE 0 END), 0) as total_mayoreo,
+                COALESCE(SUM(CASE WHEN estado = 'CANCELADA' AND tipo = 'VENTA' THEN total ELSE 0 END), 0) as total_cancelado,
+                COUNT(CASE WHEN estado = 'CANCELADA' AND tipo = 'VENTA' THEN 1 END) as num_cancelados
             FROM ventas 
-            WHERE turno_id = ? AND tipo = 'VENTA' AND estado = 'COMPLETADA' AND es_mayoreo = 1
+            WHERE turno_id = ?
         `, [id]);
+        const stats = resumenVentas[0];
 
-        // Obtener total de ventas CANCELADAS
-        const [resumenCancelados] = await db.query(`
-            SELECT COALESCE(SUM(total), 0) as total_cancelado
-            FROM ventas
-            WHERE turno_id = ? AND estado = 'CANCELADO' AND tipo = 'VENTA'
+        // Obtener ventas por CATEGORÍA (Departamentos)
+        const [ventasPorCategoria] = await db.query(`
+            SELECT 
+                c.nombre as categoria,
+                SUM(dv.subtotal) as total,
+                COUNT(dv.id) as num_items
+            FROM detalle_ventas dv
+            INNER JOIN ventas v ON dv.venta_id = v.id
+            INNER JOIN productos p ON dv.producto_id = p.id
+            LEFT JOIN categorias c ON p.categoria = c.nombre OR (p.categoria IS NULL AND c.id IS NULL)
+            WHERE v.turno_id = ? AND v.estado = 'COMPLETADA' AND v.tipo = 'VENTA'
+            GROUP BY c.nombre
+            ORDER BY total DESC
+        `, [id]);
+ 
+        // Obtener Entradas y Salidas de efectivo para este turno
+        const [movimientos] = await db.query(`
+            SELECT 
+                COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN monto ELSE 0 END), 0) as total_entradas,
+                COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN monto ELSE 0 END), 0) as total_salidas
+            FROM gastos
+            WHERE turno_id = ?
         `, [id]);
 
         // Calcular venta_total sumando todos los métodos
-        const ventaTotal = totales.reduce((acc, curr) => acc + Number(curr.total), 0);
-
+        const ventaTotal = Array.isArray(totales) ? totales.reduce((acc, curr) => acc + Number(curr.total || 0), 0) : 0;
+ 
         res.json({
             ...turno[0],
-            ventas,
-            totales_por_metodo: totales,
-            totales_mayoreo_por_metodo: totalesMayoreo,
-            mayoreo_total: resumenMayoreo[0].total_mayoreo,
-            cancelado_total: resumenCancelados[0].total_cancelado,
+            ventas: Array.isArray(ventas) ? ventas : [],
+            totales_por_metodo: Array.isArray(totales) ? totales : [],
+            totales_mayoreo_por_metodo: Array.isArray(totalesMayoreo) ? totalesMayoreo : [],
+            mayoreo_total: stats.total_mayoreo,
+            cancelado_total: stats.total_cancelado,
+            num_cancelados: stats.num_cancelados,
+            ventas_por_categoria: Array.isArray(ventasPorCategoria) ? ventasPorCategoria : [],
+            total_entradas: movimientos && movimientos[0] ? movimientos[0].total_entradas : 0,
+            total_salidas: movimientos && movimientos[0] ? movimientos[0].total_salidas : 0,
             venta_total: ventaTotal
         });
     } catch (error) {
-        console.error('Error obteniendo detalle de turno:', error);
-        res.status(500).json({ error: 'Error obteniendo detalle' });
+        console.error('Error detallado obteniendo detalle de turno:', error);
+        res.status(500).json({ 
+            error: 'Error obteniendo detalle', 
+            details: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
 // Abrir turno
 router.post('/abrir', async (req, res) => {
     try {
-        const { monto_inicial, usuario_nombre = 'Vendedor', usuario_id = null, tienda_id = null } = req.body;
+        const userId = req.user.id;
+        const username = req.user.username;
+        const tiendaId = req.user.rol === 'admin' ? (req.body.tienda_id || null) : req.user.tienda_id;
+        
+        const { monto_inicial } = req.body;
 
         // Verificar que no hay turno abierto para este usuario y tienda
-        const [abiertos] = await db.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' AND usuario_id = ? AND tienda_id = ?`, [usuario_id, tienda_id]);
+        const [abiertos] = await db.query(`SELECT id FROM turnos WHERE estado = 'ABIERTO' AND usuario_id = ? AND tienda_id = ?`, [userId, tiendaId]);
         if (abiertos.length > 0) {
-            return res.status(400).json({ error: 'Ya tienes un turno abierto en esta tienda.' });
+            return res.status(400).json({ 
+                error: `Ya tienes un turno abierto en la tienda con ID: ${tiendaId}. Debes cerrarlo antes de abrir uno nuevo.` 
+            });
         }
 
         const [result] = await db.query(`
             INSERT INTO turnos (usuario_id, usuario_nombre, monto_inicial, estado, tienda_id)
             VALUES (?, ?, ?, 'ABIERTO', ?)
-        `, [usuario_id, usuario_nombre, monto_inicial || 0, tienda_id]);
+        `, [userId, username, monto_inicial || 0, tiendaId]);
 
         res.status(201).json({
             message: 'Turno abierto exitosamente',
@@ -208,13 +263,24 @@ router.post('/:id/cerrar', async (req, res) => {
             GROUP BY vp.metodo
         `, [id]);
 
+        // Calcular movimientos de efectivo (gastos/entradas)
+        const [movimientos] = await db.query(`
+            SELECT 
+                COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN monto ELSE 0 END), 0) as entradas,
+                COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN monto ELSE 0 END), 0) as salidas
+            FROM gastos
+            WHERE turno_id = ?
+        `, [id]);
+
         const ventasEfectivo = porMetodo.find(p => p.metodo === 'Efectivo')?.total || 0;
         const ventasTarjeta = porMetodo.find(p => p.metodo === 'Tarjeta')?.total || 0;
         const ventasTransferencia = porMetodo.find(p => p.metodo === 'Transferencia')?.total || 0;
-        const ventasDolar = porMetodo.find(p => p.metodo === 'Dolar')?.total || 0;
+        const totalEntradas = movimientos[0]?.entradas || 0;
+        const totalSalidas = movimientos[0]?.salidas || 0;
 
-        // Calcular diferencia (monto_final vs monto_inicial + ventas_efectivo)
-        const esperadoEnCaja = parseFloat(turno[0].monto_inicial) + parseFloat(ventasEfectivo);
+        // Calcular diferencia (monto_final vs ventas_efectivo + entradas - salidas)
+        // El arqueo es lo que queda en caja: Ventas en Efectivo + Lo que entró - Lo que salió
+        const esperadoEnCaja = (parseFloat(turno[0].monto_inicial || 0) + parseFloat(ventasEfectivo || 0) + parseFloat(totalEntradas || 0)) - parseFloat(totalSalidas || 0);
         const diferencia = parseFloat(monto_final || 0) - esperadoEnCaja;
 
         // Actualizar turno
@@ -286,8 +352,11 @@ router.post('/:id/cerrar', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Error cerrando turno:', error);
-        res.status(500).json({ error: 'Error cerrando turno' });
+        console.error('Error detallado cerrando turno:', error);
+        res.status(500).json({ 
+            error: 'Error cerrando turno', 
+            details: error.message 
+        });
     }
 });
 

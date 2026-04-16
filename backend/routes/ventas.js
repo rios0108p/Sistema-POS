@@ -1,19 +1,21 @@
 import express from 'express';
 import db from '../config/db.js';
+import { checkTienda } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Obtener todas las ventas (Resumen)
-router.get('/', async (req, res) => {
+router.get('/', checkTienda, async (req, res) => {
     try {
         const { tipo, tienda_id } = req.query;
         let query = `
             SELECT v.id, v.ticket_numero, v.fecha, v.total, v.metodo_pago, v.cliente_id, v.tipo, v.estado, v.items_count, v.resumen_productos,
                    v.turno_id, v.tienda_id,
-                   c.nombre as cliente_nombre, v.usuario_id,
+                   c.nombre as cliente_nombre, u.nombre_usuario as cajero, v.usuario_id,
                    GROUP_CONCAT(CONCAT(vp.metodo, CASE WHEN vp.referencia IS NOT NULL THEN CONCAT(' (', vp.referencia, ')') ELSE '' END) SEPARATOR ' + ') as metodo_detalle
             FROM ventas v
             LEFT JOIN clientes c ON v.cliente_id = c.id
+            LEFT JOIN usuarios u ON v.usuario_id = u.id
             LEFT JOIN ventas_pagos vp ON v.id = vp.venta_id
         `;
 
@@ -50,13 +52,20 @@ router.get('/:id', async (req, res) => {
 
         // Obtener cabecera
         const [venta] = await db.query(`
-            SELECT v.*, c.nombre as cliente_nombre 
+            SELECT v.*, c.nombre as cliente_nombre, u.nombre_usuario as cajero
             FROM ventas v
             LEFT JOIN clientes c ON v.cliente_id = c.id
+            LEFT JOIN usuarios u ON v.usuario_id = u.id
             WHERE v.id = ?
         `, [id]);
 
         if (venta.length === 0) return res.status(404).json({ error: 'Venta no encontrada' });
+
+        // Verificación de propiedad (Multi-sucursal)
+        if (req.user.rol !== 'admin' && String(venta[0].tienda_id) !== String(req.user.tienda_id)) {
+            console.warn(`🛡️ Bloqueado intento de ver venta ajena: Usuario ${req.user.username} (Tienda ${req.user.tienda_id}) -> Venta ${id} (Tienda ${venta[0].tienda_id})`);
+            return res.status(403).json({ error: 'No tienes permiso para ver esta venta.' });
+        }
 
         // Obtener detalles (productos)
         const [detalles] = await db.query(`
@@ -80,7 +89,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Registrar nueva venta o cotización
-router.post('/', async (req, res) => {
+router.post('/', checkTienda, async (req, res) => {
     const connection = await db.getConnection();
 
     try {
@@ -93,10 +102,28 @@ router.post('/', async (req, res) => {
             descuento_global = 0,
             pagos = [], // Array de { metodo, monto, referencia }
             notas = ''
+            // Ignoramos desglose_impuestos y total_impuestos del body por seguridad (SEC-007)
         } = req.body;
 
-        // Obtener siguiente número de ticket DEL TURNO ACTUAL
+        const userId = req.user.id;
+        const tiendaId = req.user.rol === 'admin' ? (req.body.tienda_id || null) : req.user.tienda_id;
         const turnoId = req.body.turno_id;
+
+        if (!turnoId && tipo === 'VENTA') {
+            throw new Error('Se requiere un turno activo para registrar una venta');
+        }
+
+        // Si es VENTA, validar que el turno esté ABIERTO
+        if (tipo === 'VENTA') {
+            const [turnoCheck] = await connection.query(
+                'SELECT estado FROM turnos WHERE id = ?',
+                [turnoId]
+            );
+            if (turnoCheck.length === 0 || turnoCheck[0].estado !== 'ABIERTO') {
+                throw new Error('El turno se encuentra cerrado o no es válido. No se puede realizar la venta.');
+            }
+        }
+
         const [lastTicket] = await connection.query(
             'SELECT MAX(ticket_numero) as max_ticket FROM ventas WHERE turno_id = ?',
             [turnoId]
@@ -109,6 +136,8 @@ router.post('/', async (req, res) => {
 
         let totalBruto = 0;
         let itemsCount = 0;
+        let totalImpuestosCalculados = 0;
+        const desgloseImpuestosCalculado = {};
         const detallesVenta = [];
         const resumenProdNames = [];
 
@@ -116,37 +145,45 @@ router.post('/', async (req, res) => {
         for (const item of productos) {
             let stockDisponible = 0;
             let nombreProducto = '';
+            let precioFinal = parseFloat(item.precio);
+            let precioCompraActual = 0;
+            let impuestosDB = null;
 
             // Obtener información base del producto y stock según contexto (Tienda o Global)
-            if (req.body.tienda_id) {
+            if (tiendaId) {
                 const [storeInfo] = await connection.query(`
-                    SELECT p.nombre, it.cantidad 
+                    SELECT p.nombre, p.precio_compra, it.cantidad, p.impuestos 
                     FROM productos p
                     JOIN inventario_tienda it ON p.id = it.producto_id
                     WHERE it.tienda_id = ? AND p.id = ?
-                `, [req.body.tienda_id, item.id]);
+                    FOR UPDATE
+                `, [tiendaId, item.id]);
 
                 if (storeInfo.length === 0) {
-                    const [pBase] = await connection.query('SELECT nombre FROM productos WHERE id = ?', [item.id]);
+                    const [pBase] = await connection.query('SELECT nombre, precio_compra, impuestos FROM productos WHERE id = ?', [item.id]);
                     if (pBase.length === 0) throw new Error(`Producto ID ${item.id} no encontrado`);
                     nombreProducto = pBase[0].nombre;
+                    precioCompraActual = pBase[0].precio_compra;
                     stockDisponible = 0;
+                    impuestosDB = pBase[0].impuestos;
                 } else {
                     nombreProducto = storeInfo[0].nombre;
+                    precioCompraActual = storeInfo[0].precio_compra;
                     stockDisponible = storeInfo[0].cantidad;
+                    impuestosDB = storeInfo[0].impuestos;
                 }
             } else {
-                const [prodDB] = await connection.query('SELECT nombre, cantidad FROM productos WHERE id = ?', [item.id]);
+                const [prodDB] = await connection.query('SELECT nombre, precio_compra, cantidad, impuestos FROM productos WHERE id = ? FOR UPDATE', [item.id]);
                 if (prodDB.length === 0) throw new Error(`Producto ID ${item.id} no encontrado`);
                 nombreProducto = prodDB[0].nombre;
+                precioCompraActual = prodDB[0].precio_compra;
                 stockDisponible = prodDB[0].cantidad;
+                impuestosDB = prodDB[0].impuestos;
             }
 
-            let precioFinal = parseFloat(item.precio);
-
-            // Validar variación si existe (Por ahora las variaciones parecen globales)
+            // Validar variación si existe
             if (item.variacion_id) {
-                const [varDB] = await connection.query('SELECT nombre, stock FROM variaciones WHERE id = ?', [item.variacion_id]);
+                const [varDB] = await connection.query('SELECT nombre, stock FROM variaciones WHERE id = ? FOR UPDATE', [item.variacion_id]);
                 if (varDB.length === 0) throw new Error(`Variación ID ${item.variacion_id} no encontrada`);
                 stockDisponible = varDB[0].stock;
                 nombreProducto += ` (${varDB[0].nombre})`;
@@ -159,6 +196,36 @@ router.post('/', async (req, res) => {
                 }
             }
 
+            // --- RE-CÁLCULO DE IMPUESTOS (SEC-007) ---
+            const subtotalItem = item.cantidad * precioFinal;
+            let impuestosItemTotal = 0;
+            const itemImpuestosDetalle = [];
+
+            if (impuestosDB) {
+                try {
+                    const impList = typeof impuestosDB === 'string' ? JSON.parse(impuestosDB) : impuestosDB;
+                    if (Array.isArray(impList)) {
+                        impList.forEach(imp => {
+                            if (!imp || !imp.tipo || imp.tipo === 'IVA Exento') return;
+                            const pct = parseFloat(imp.porcentaje) || 0;
+                            if (pct === 0 && !imp.tipo.includes('Retención')) return;
+
+                            const taxVal = subtotalItem - (subtotalItem / (1 + (pct / 100)));
+                            const isRetencion = imp.tipo.toLowerCase().includes('retención') || imp.tipo === 'ISR / Retención';
+                            const finalTaxVal = isRetencion ? -taxVal : taxVal;
+
+                            if (!desgloseImpuestosCalculado[imp.tipo]) {
+                                desgloseImpuestosCalculado[imp.tipo] = { porcentaje: pct, total: 0 };
+                            }
+                            desgloseImpuestosCalculado[imp.tipo].total += finalTaxVal;
+                            impuestosItemTotal += finalTaxVal;
+                            itemImpuestosDetalle.push(imp);
+                        });
+                    }
+                } catch (e) { console.error('Error parseando impuestos en server:', e); }
+            }
+            totalImpuestosCalculados += impuestosItemTotal;
+
             const subtotal = item.cantidad * precioFinal;
             totalBruto += subtotal;
             itemsCount += item.cantidad;
@@ -170,16 +237,18 @@ router.post('/', async (req, res) => {
                 variacion_id: item.variacion_id || null,
                 cantidad: item.cantidad,
                 precio_unitario: precioFinal,
-                subtotal: subtotal
+                costo_unitario: precioCompraActual,
+                subtotal: subtotal,
+                impuestos: itemImpuestosDetalle.length > 0 ? itemImpuestosDetalle : null,
+                promocion_id: item.promocion_id || null
             });
 
             // 2. Actualizar stock (VENTA)
             if (tipo === 'VENTA') {
-                if (req.body.tienda_id) {
-                    // SI HAY TIENDA: Solo descontamos del inventario LOCAL de esa sucursal
+                if (tiendaId) {
                     const [exists] = await connection.query(
                         'SELECT id FROM inventario_tienda WHERE tienda_id = ? AND producto_id = ?',
-                        [req.body.tienda_id, item.id]
+                        [tiendaId, item.id]
                     );
 
                     if (exists.length > 0) {
@@ -188,14 +257,12 @@ router.post('/', async (req, res) => {
                             [item.cantidad, exists[0].id]
                         );
                     } else {
-                        // Si no existía rastro en la tienda, inicializamos en 0
                         await connection.query(
                             'INSERT INTO inventario_tienda (tienda_id, producto_id, cantidad) VALUES (?, ?, 0)',
-                            [req.body.tienda_id, item.id]
+                            [tiendaId, item.id]
                         );
                     }
                 } else {
-                    // SI NO HAY TIENDA (ADMIN/CENTRAL): Descontamos del almacén GLOBAL
                     if (item.variacion_id) {
                         await connection.query(
                             'UPDATE variaciones SET stock = GREATEST(0, CAST(stock AS SIGNED) - ?) WHERE id = ?',
@@ -211,7 +278,7 @@ router.post('/', async (req, res) => {
             }
         }
 
-        const totalNeto = totalBruto - (parseFloat(descuento_global) || 0);
+        const totalNeto = totalBruto - (parseFloat(descuento_global) || 0) + parseFloat(totalImpuestosCalculados || 0);
         const estadoInicial = tipo === 'COTIZACION' ? 'PENDIENTE' : 'COMPLETADA';
         const resumenStr = resumenProdNames.join(', ') + (productos.length > 3 ? '...' : '');
 
@@ -220,8 +287,8 @@ router.post('/', async (req, res) => {
             INSERT INTO ventas (
                 ticket_numero, cliente_id, fecha, total, items_count, resumen_productos, 
                 tipo, estado, descuento_global, notas, metodo_pago,
-                tienda_id, turno_id, usuario_id, es_mayoreo
-            ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                tienda_id, turno_id, usuario_id, es_mayoreo, desglose_impuestos, total_impuestos
+            ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
             nextTicketNo,
             cliente_id || null,
@@ -233,10 +300,12 @@ router.post('/', async (req, res) => {
             descuento_global,
             notas,
             pagos.length > 0 ? pagos[0].metodo : (req.body.metodo_pago || 'Efectivo'),
-            req.body.tienda_id || null,
-            req.body.turno_id || null,
-            req.body.usuario_id || null,
-            req.body.es_mayoreo || false
+            tiendaId,
+            turnoId,
+            userId,
+            req.body.es_mayoreo || false,
+            JSON.stringify(desgloseImpuestosCalculado),
+            parseFloat(totalImpuestosCalculados || 0)
         ]);
 
         const ventaId = resultVenta.insertId;
@@ -244,25 +313,43 @@ router.post('/', async (req, res) => {
         // 3. Insertar Detalles
         for (const det of detallesVenta) {
             await connection.query(`
-                INSERT INTO detalle_ventas(venta_id, producto_id, variacion_id, cantidad, precio_unitario, subtotal)
-        VALUES(?, ?, ?, ?, ?, ?)
-            `, [ventaId, det.producto_id, det.variacion_id, det.cantidad, det.precio_unitario, det.subtotal]);
+                INSERT INTO detalle_ventas(venta_id, producto_id, variacion_id, cantidad, precio_unitario, costo_unitario, subtotal, impuestos, promocion_id)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [ventaId, det.producto_id, det.variacion_id, det.cantidad, det.precio_unitario, det.costo_unitario, det.subtotal, det.impuestos ? JSON.stringify(det.impuestos) : null, det.promocion_id || null]);
         }
 
-        // 4. Registrar Pagos
+        // 4. Registrar Pagos y Validar Crédito
+        let totalCredito = 0;
         if (pagos && pagos.length > 0) {
             for (const pago of pagos) {
+                if (pago.metodo === 'Credito') {
+                    totalCredito += parseFloat(pago.monto);
+                }
                 await connection.query(`
                     INSERT INTO ventas_pagos(venta_id, metodo, monto, referencia)
-        VALUES(?, ?, ?, ?)
-            `, [ventaId, pago.metodo, pago.monto, pago.referencia || null]);
+                    VALUES(?, ?, ?, ?)
+                `, [ventaId, pago.metodo, pago.monto, pago.referencia || null]);
             }
         } else if (tipo === 'VENTA' && req.body.metodo_pago) {
-            // Compatibilidad legacy
+            if (req.body.metodo_pago === 'Credito') totalCredito = totalNeto;
             await connection.query(`
                 INSERT INTO ventas_pagos(venta_id, metodo, monto)
-        VALUES(?, ?, ?)
+                VALUES(?, ?, ?)
             `, [ventaId, req.body.metodo_pago, totalNeto]);
+        }
+
+        if (totalCredito > 0) {
+            if (!cliente_id) throw new Error('Se requiere seleccionar un cliente para ventas a crédito');
+            const [clienteRows] = await connection.query('SELECT * FROM clientes WHERE id = ?', [cliente_id]);
+            if (clienteRows.length === 0) throw new Error('Cliente no encontrado');
+            const cli = clienteRows[0];
+            if (!cli.credito_habilitado) throw new Error('El cliente no tiene habilitado el crédito por la administración');
+
+            const nuevoSaldo = parseFloat(cli.saldo_deudor || 0) + totalCredito;
+            if (nuevoSaldo > parseFloat(cli.limite_credito || 0)) {
+                throw new Error(`Límite de crédito excedido. Disponible: $${(cli.limite_credito - cli.saldo_deudor).toFixed(2)}, Intento de cargo: $${totalCredito.toFixed(2)}`);
+            }
+            await connection.query('UPDATE clientes SET saldo_deudor = ? WHERE id = ?', [nuevoSaldo, cliente_id]);
         }
 
         await connection.commit();
@@ -277,7 +364,6 @@ router.post('/', async (req, res) => {
         await connection.rollback();
         console.error('Error al registrar transacción:', error);
 
-        // Auto-migración de usuario_id si falla por campo inexistente
         if (error.code === 'ER_BAD_FIELD_ERROR' && error.message.includes('usuario_id')) {
             try {
                 await db.query('ALTER TABLE ventas ADD COLUMN usuario_id INT NULL AFTER turno_id');
@@ -290,6 +376,13 @@ router.post('/', async (req, res) => {
                 await db.query('ALTER TABLE ventas ADD COLUMN es_mayoreo BOOLEAN DEFAULT FALSE AFTER usuario_id');
                 console.log('Migración: columna es_mayoreo añadida a ventas');
             } catch (err2) { console.error('Error migrando ventas:', err2); }
+        }
+
+        if (error.code === 'ER_BAD_FIELD_ERROR' && error.message.includes('costo_unitario')) {
+            try {
+                await db.query('ALTER TABLE detalle_ventas ADD COLUMN costo_unitario DECIMAL(10,2) NULL AFTER precio_unitario');
+                console.log('Migración: columna costo_unitario añadida a detalle_ventas');
+            } catch (err2) { console.error('Error migrando detalle_ventas (costo_unitario):', err2); }
         }
 
         res.status(500).json({ error: error.message });
@@ -313,12 +406,25 @@ router.post('/:id/cancelar', async (req, res) => {
             throw new Error('Venta no encontrada');
         }
 
+        // Verificación de propiedad (Multi-sucursal)
+        if (req.user.rol !== 'admin' && String(venta[0].tienda_id) !== String(req.user.tienda_id)) {
+            console.warn(`🛡️ Bloqueado intento de cancelación IDOR: Usuario ${req.user.username} intentó cancelar Venta ${id}`);
+            throw new Error('No tienes permiso para cancelar ventas de otra sucursal.');
+        }
+
         if (venta[0].estado === 'CANCELADA') {
             throw new Error('Esta venta ya fue cancelada');
         }
 
         // Solo restaurar stock si era VENTA (no cotización)
         if (venta[0].tipo === 'VENTA') {
+            // Restaurar saldo deudor si hubo crédito
+            const [pagosVenta] = await connection.query('SELECT * FROM ventas_pagos WHERE venta_id = ? AND metodo = "Credito"', [id]);
+            if (pagosVenta.length > 0 && venta[0].cliente_id) {
+                const totalARestaurar = pagosVenta.reduce((acc, p) => acc + parseFloat(p.monto), 0);
+                await connection.query('UPDATE clientes SET saldo_deudor = GREATEST(0, saldo_deudor - ?) WHERE id = ?', [totalARestaurar, venta[0].cliente_id]);
+            }
+
             // Obtener detalles para restaurar stock
             const [detalles] = await connection.query('SELECT * FROM detalle_ventas WHERE venta_id = ?', [id]);
 

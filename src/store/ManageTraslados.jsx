@@ -17,7 +17,9 @@ import {
     Filter,
     ChevronRight,
     RefreshCw,
-    Layers
+    Layers,
+    Calendar,
+    FileText
 } from "lucide-react";
 import { trasladosAPI, tiendasAPI, productosAPI, dashboardAPI } from "../services/api";
 import { useAuth } from "../context/AuthContext";
@@ -88,6 +90,12 @@ export default function ManageTraslados() {
         if (!trasladoData.tienda_destino_id) return toast.error("Selecciona una tienda destino");
         if (trasladoData.productos.length === 0) return toast.error("Añade al menos un producto");
         if (trasladoData.tienda_origen_id === trasladoData.tienda_destino_id) return toast.error("Origen y destino no pueden ser iguales");
+
+        // Bug #20: Validate quantities are positive
+        const productosInvalidos = trasladoData.productos.filter(p => !p.cantidad || p.cantidad <= 0);
+        if (productosInvalidos.length > 0) {
+            return toast.error("Todos los productos deben tener una cantidad mayor a 0");
+        }
 
         try {
             await trasladosAPI.create({

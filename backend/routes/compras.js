@@ -57,7 +57,9 @@ router.post('/', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { productos, proveedor_id, tienda_id, turno_id, usuario_id } = req.body;
+        const userId = req.user.id;
+        const tiendaId = req.user.rol === 'admin' ? (req.body.tienda_id || null) : req.user.tienda_id;
+        const { productos, proveedor_id, turno_id } = req.body;
 
         if (!productos || !Array.isArray(productos) || productos.length === 0) {
             throw new Error('Debe incluir al menos un producto');
@@ -83,15 +85,15 @@ router.post('/', async (req, res) => {
 
             const [result] = await connection.query(
                 'INSERT INTO compras (producto_id, variacion_id, producto_nombre, proveedor_id, cantidad, precio_unitario, total, tienda_id, turno_id, usuario_id, fecha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
-                [producto_id, variacion_id || null, producto[0].nombre, proveedor_id || null, cantidad, precio_unitario, total, tienda_id || null, turno_id || null, usuario_id || null]
+                [producto_id, variacion_id || null, producto[0].nombre, proveedor_id || null, cantidad, precio_unitario, total, tiendaId, turno_id || null, userId]
             );
 
-            if (tienda_id) {
+            if (tiendaId) {
                 // --- AISLAMIENTO: SOLO TIENDA LOCAL ---
                 // No tocamos catálogo global si la compra es para una tienda específica
                 const [existing] = await connection.query(
                     'SELECT id FROM inventario_tienda WHERE tienda_id = ? AND producto_id = ?',
-                    [tienda_id, producto_id]
+                    [tiendaId, producto_id]
                 );
 
                 if (existing.length > 0) {
@@ -103,7 +105,7 @@ router.post('/', async (req, res) => {
                     // Si el producto no estaba habilitado en la tienda, lo habilitamos automáticamente
                     await connection.query(
                         'INSERT INTO inventario_tienda (tienda_id, producto_id, cantidad) VALUES (?, ?, ?)',
-                        [tienda_id, producto_id, cantidad]
+                        [tiendaId, producto_id, cantidad]
                     );
                 }
             } else {

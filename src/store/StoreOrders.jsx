@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import Loading from "../Components/Common/Loading";
 import { pedidosAPI, tiendasAPI, productosAPI } from "../services/api";
 import { useAuth } from "../context/AuthContext";
@@ -24,13 +25,16 @@ const StoreOrders = () => {
   const [busqueda, setBusqueda] = useState("");
   const [tiendas, setTiendas] = useState([]);
   const [procesandoIds, setProcesandoIds] = useState([]);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Estado para nueva solicitud
   const [nuevaSolicitud, setNuevaSolicitud] = useState({
     tienda_id: "",
     notas: "",
-    productos: []
+    productos: [],
+    fecha_programada: ""
   });
+  const [mostrarProgramados, setMostrarProgramados] = useState(false);
   const [productosDisponibles, setProductosDisponibles] = useState([]);
   const [alertasBajoStock, setAlertasBajoStock] = useState([]);
   const [busquedaProducto, setBusquedaProducto] = useState("");
@@ -39,7 +43,8 @@ const StoreOrders = () => {
 
   const obtenerDatosBase = async () => {
     try {
-      if (user?.rol === 'admin') {
+      const isAdmin = user?.rol?.toLowerCase() === 'admin';
+      if (isAdmin) {
         const [tiendasData, productosData, alertasData] = await Promise.all([
           tiendasAPI.getAll(),
           productosAPI.getAll(),
@@ -57,8 +62,9 @@ const StoreOrders = () => {
   const obtenerPedidos = async () => {
     setCargando(true);
     try {
-      const tiendaIdFiltro = user?.rol !== 'admin' ? user?.tienda_id : "";
-      const data = await pedidosAPI.getAll(tiendaIdFiltro);
+      const isAdmin = user?.rol?.toLowerCase() === 'admin';
+      const tiendaIdFiltro = !isAdmin ? user?.tienda_id : "";
+      const data = await pedidosAPI.getAll(tiendaIdFiltro, mostrarProgramados);
       setPedidos(data || []);
     } catch (error) {
       console.error("Error al obtener pedidos:", error.message);
@@ -73,6 +79,39 @@ const StoreOrders = () => {
     obtenerDatosBase();
   }, []);
 
+  // Efecto para detectar parámetros de URL y abrir modal de creación
+  useEffect(() => {
+    const newOrder = searchParams.get('newOrder');
+    const productId = searchParams.get('productId');
+    const tiendaId = searchParams.get('tiendaId');
+    const cantidad = searchParams.get('cantidad');
+
+    if (newOrder === 'true' && productId && productosDisponibles.length > 0) {
+      const prod = productosDisponibles.find(p => p.id == productId);
+      if (prod) {
+        setModalCreacionAbierto(true);
+        setNuevaSolicitud(prev => {
+          // Evitar duplicados si el efecto se dispara varias veces
+          const existe = prev.productos.find(p => p.producto_id == productId);
+          if (existe) return prev;
+
+          return {
+            ...prev,
+            tienda_id: tiendaId || prev.tienda_id,
+            productos: [{
+              producto_id: prod.id,
+              nombre: prod.nombre,
+              cantidad: parseInt(cantidad) || 1,
+              precio_unitario: Number(prod.precio_compra) || 0
+            }]
+          };
+        });
+        // Limpiar parámetros para no re-abrir al recargar
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, productosDisponibles]);
+
   // Auto-refresh every 30 seconds for real-time updates
   useEffect(() => {
     const interval = setInterval(() => {
@@ -84,6 +123,10 @@ const StoreOrders = () => {
   const handleCrearSolicitud = async () => {
     if (!nuevaSolicitud.tienda_id || nuevaSolicitud.productos.length === 0) {
       return toast.error("Debe seleccionar una tienda y al menos un producto");
+    }
+
+    if (nuevaSolicitud.productos.some(p => (p.cantidad || 0) <= 0)) {
+      return toast.error("Todos los productos deben tener una cantidad mayor a 0");
     }
 
     const subtotal = nuevaSolicitud.productos.reduce((acc, p) => acc + (p.cantidad * p.precio_unitario), 0);
@@ -98,7 +141,7 @@ const StoreOrders = () => {
       });
       toast.success("Solicitud enviada correctamente");
       setModalCreacionAbierto(false);
-      setNuevaSolicitud({ tienda_id: "", notas: "", productos: [] });
+      setNuevaSolicitud({ tienda_id: "", notas: "", productos: [], fecha_programada: "" });
       obtenerPedidos();
     } catch (error) {
       toast.error("Error al crear solicitud");
@@ -300,7 +343,7 @@ const StoreOrders = () => {
 
         {/* Search and Filters Bar */}
         <div className="card-standard p-2 mb-4 flex flex-col lg:flex-row items-center gap-2 shadow-sm border-indigo-500/5 rounded-2xl bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl">
-          {user?.rol === 'admin' ? (
+          {user?.rol?.toLowerCase() === 'admin' ? (
             <div className="flex-1 w-full relative group">
               <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-all duration-300" size={18} />
               <input
@@ -319,7 +362,7 @@ const StoreOrders = () => {
           )}
 
           <div className="flex flex-wrap lg:flex-nowrap gap-3 w-full lg:w-auto px-1">
-            {user?.rol === 'admin' && (
+            {user?.rol?.toLowerCase() === 'admin' && (
               <div className="relative flex-1 lg:w-56">
                 <Store className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                 <select
@@ -350,6 +393,25 @@ const StoreOrders = () => {
             </div>
 
             <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  const nuevoEstado = !mostrarProgramados;
+                  setMostrarProgramados(nuevoEstado);
+                  // Trigger reload immediately
+                  setTimeout(() => obtenerPedidos(), 0);
+                }}
+                className={`h-[44px] px-5 rounded-xl flex items-center gap-2 border transition-all group ${mostrarProgramados
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-500/20'
+                  : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-100 dark:border-slate-700/50 hover:bg-slate-50'
+                  }`}
+                title="VER PROGRAMADOS (FUTURO)"
+              >
+                <Calendar size={16} className={mostrarProgramados ? "" : "group-hover:scale-110 transition-transform"} />
+                <span className="text-[10px] font-black uppercase tracking-widest">
+                  {mostrarProgramados ? 'VER HOY' : 'VER FUTUROS'}
+                </span>
+              </button>
+
               <button
                 onClick={exportarExcel}
                 className="h-[44px] px-5 rounded-xl flex items-center gap-2 bg-white dark:bg-slate-800 text-emerald-600 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-emerald-50 dark:hover:bg-emerald-900/10 transition-all group"
@@ -415,13 +477,18 @@ const StoreOrders = () => {
                       <h3 className="font-bold text-slate-800 dark:text-white uppercase tracking-tight text-sm truncate">
                         {p.tienda_id ? (p.tienda_nombre || `SUCURSAL #${p.tienda_id}`) : p.nombre_cliente}
                       </h3>
-                      <div className="flex items-center gap-2 mt-1 opacity-60">
+                      <div className="flex flex-wrap items-center gap-2 mt-1 opacity-60">
                         <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                           <User size={10} className="text-indigo-400" /> {p.usuario_nombre || 'SISTEMA'}
                         </span>
                         <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                           <Calendar size={10} className="text-indigo-400" /> {new Date(p.created_at).toLocaleDateString()}
                         </span>
+                        {p.fecha_programada && (
+                          <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded-lg border border-amber-100 dark:border-amber-800/50">
+                            <Clock size={10} /> {new Date(p.fecha_programada + 'T00:00:00').toLocaleDateString()}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -625,6 +692,16 @@ const StoreOrders = () => {
                   <textarea placeholder="Observaciones adicionales..." className="input-standard h-36 rounded-2xl text-[11px] font-bold p-4 border-2 border-indigo-100 dark:border-indigo-900/30 bg-white dark:bg-slate-800 shadow-lg shadow-indigo-500/5 resize-none focus:border-indigo-400 transition-all"
                     value={nuevaSolicitud.notas} onChange={(e) => setNuevaSolicitud({ ...nuevaSolicitud, notas: e.target.value })} />
                 </div>
+                <div className="space-y-3">
+                  <label className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex items-center gap-2"><Calendar size={12} /> FECHA PROGRAMADA (OPCIONAL)</label>
+                  <input
+                    type="date"
+                    className="input-standard h-12 rounded-2xl text-[11px] font-bold border-2 border-indigo-100 dark:border-indigo-900/30 bg-white dark:bg-slate-800 shadow-lg shadow-indigo-500/5 focus:border-indigo-400 transition-all px-4"
+                    value={nuevaSolicitud.fecha_programada}
+                    onChange={(e) => setNuevaSolicitud({ ...nuevaSolicitud, fecha_programada: e.target.value })}
+                  />
+                  <p className="text-[8px] text-slate-400 uppercase font-bold tracking-tight px-1">Si dejas vacío, se mostrará inmediatamente.</p>
+                </div>
                 <div className="p-6 rounded-3xl bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-2xl shadow-indigo-600/30 flex flex-col items-center border-4 border-white/10">
                   <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Total Estimado</span>
                   <div className="flex items-baseline gap-1.5"><span className="text-sm font-black opacity-70">{currency}</span><span className="text-4xl font-black tracking-tighter">
@@ -668,7 +745,15 @@ const StoreOrders = () => {
                             <td className="px-6 py-4 text-center">
                               <div className="flex items-center justify-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1.5 w-28 mx-auto border dark:border-slate-700">
                                 <button onClick={() => { const cant = Math.max(1, prod.cantidad - 1); setNuevaSolicitud(prev => ({ ...prev, productos: prev.productos.map(item => item.producto_id === prod.producto_id ? { ...item, cantidad: cant } : item) })); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-bold transition-all active:scale-90">-</button>
-                                <input type="number" className="w-12 bg-transparent text-center font-black text-[11px] outline-none text-slate-800 dark:text-white" value={prod.cantidad} onChange={(e) => { const val = parseInt(e.target.value) || 1; setNuevaSolicitud(prev => ({ ...prev, productos: prev.productos.map(item => item.producto_id === prod.producto_id ? { ...item, cantidad: Math.max(1, val) } : item) })); }} />
+                                <input type="number" className="w-12 bg-transparent text-center font-black text-[11px] outline-none text-slate-800 dark:text-white"
+                                  value={prod.cantidad === 0 ? "" : prod.cantidad}
+                                  onChange={(e) => {
+                                    const val = e.target.value === "" ? 0 : (parseInt(e.target.value) || 0);
+                                    setNuevaSolicitud(prev => ({
+                                      ...prev,
+                                      productos: prev.productos.map(item => item.producto_id === prod.producto_id ? { ...item, cantidad: Math.max(0, val) } : item)
+                                    }));
+                                  }} />
                                 <button onClick={() => { setNuevaSolicitud(prev => ({ ...prev, productos: prev.productos.map(item => item.producto_id === prod.producto_id ? { ...item, cantidad: item.cantidad + 1 } : item) })); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-bold transition-all active:scale-90">+</button>
                               </div>
                             </td>

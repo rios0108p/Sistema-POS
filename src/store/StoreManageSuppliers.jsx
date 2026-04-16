@@ -1,14 +1,24 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import Loading from "../Components/Common/Loading";
+import PinValidationModal from "./components/PinValidationModal";
 import { proveedoresAPI } from "../services/api";
+import { useAuth } from "../context/AuthContext";
+import useOfflineOperation from "../hooks/useOfflineOperation";
 import { Pencil, Trash2, Save, X, RefreshCw, UserCheck, PlusCircle, Building2, Phone, Mail, MapPin, Contact, Search, Plus } from "lucide-react";
 
 const StoreManageSuppliers = () => {
+    const { user } = useAuth();
     const [cargando, setCargando] = useState(true);
     const [proveedores, setProveedores] = useState([]);
     const [editandoId, setEditandoId] = useState(null);
     const [mostrandoFormulario, setMostrandoFormulario] = useState(false);
+
+    const { execute: executeSupplier } = useOfflineOperation('suppliers');
+
+    // Validacion PIN
+    const [showPinModal, setShowPinModal] = useState(false);
+    const [pendingAction, setPendingAction] = useState(null);
 
     const [formulario, setFormulario] = useState({
         nombre: "",
@@ -22,7 +32,7 @@ const StoreManageSuppliers = () => {
         setCargando(true);
         try {
             const data = await proveedoresAPI.getAll();
-            setProveedores(data || []);
+            setProveedores(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error(error);
             toast.error("Error al cargar proveedores");
@@ -41,10 +51,10 @@ const StoreManageSuppliers = () => {
 
         try {
             if (editandoId) {
-                await proveedoresAPI.update(editandoId, formulario);
+                await executeSupplier('update', formulario, editandoId);
                 toast.success("Proveedor actualizado con éxito");
             } else {
-                await proveedoresAPI.create(formulario);
+                await executeSupplier('insert', formulario);
                 toast.success("Nuevo proveedor vinculado al sistema");
             }
 
@@ -58,7 +68,31 @@ const StoreManageSuppliers = () => {
         }
     };
 
+    const handleNewSupplierClick = () => {
+        if (user?.rol !== 'admin') {
+            setPendingAction({ type: 'NEW' });
+            setShowPinModal(true);
+            return;
+        }
+        executeNewSupplier();
+    };
+
+    const executeNewSupplier = () => {
+        setMostrandoFormulario(!mostrandoFormulario);
+        setEditandoId(null);
+        setFormulario({ nombre: "", contacto: "", telefono: "", email: "", direccion: "" });
+    };
+
     const iniciarEdicion = (p) => {
+        if (user?.rol !== 'admin') {
+            setPendingAction({ type: 'EDIT', payload: p });
+            setShowPinModal(true);
+            return;
+        }
+        executeIniciarEdicion(p);
+    };
+
+    const executeIniciarEdicion = (p) => {
         setEditandoId(p.id);
         setFormulario({
             nombre: p.nombre,
@@ -71,14 +105,34 @@ const StoreManageSuppliers = () => {
     };
 
     const eliminarProveedor = async (id) => {
+        if (user?.rol !== 'admin') {
+            setPendingAction({ type: 'DELETE', payload: id });
+            setShowPinModal(true);
+            return;
+        }
+        executeEliminarProveedor(id);
+    };
+
+    const executeEliminarProveedor = async (id) => {
         if (!window.confirm("¿Seguro que desea desvincular este proveedor?")) return;
         try {
-            await proveedoresAPI.delete(id);
+            await executeSupplier('delete', {}, id);
             toast.success("Proveedor desvinculado");
             obtenerProveedores();
         } catch (error) {
             toast.error(error.message || "Error al eliminar registro");
         }
+    };
+
+    const handlePinSuccess = () => {
+        if (pendingAction?.type === 'NEW') {
+            executeNewSupplier();
+        } else if (pendingAction?.type === 'EDIT') {
+            executeIniciarEdicion(pendingAction.payload);
+        } else if (pendingAction?.type === 'DELETE') {
+            executeEliminarProveedor(pendingAction.payload);
+        }
+        setPendingAction(null);
     };
 
     useEffect(() => {
@@ -107,11 +161,7 @@ const StoreManageSuppliers = () => {
                             <RefreshCw size={22} className={cargando ? "animate-spin" : "group-hover:rotate-180 transition-transform duration-500"} />
                         </button>
                         <button
-                            onClick={() => {
-                                setMostrandoFormulario(!mostrandoFormulario);
-                                setEditandoId(null);
-                                setFormulario({ nombre: "", contacto: "", telefono: "", email: "", direccion: "" });
-                            }}
+                            onClick={handleNewSupplierClick}
                             className={`btn-primary flex-1 md:flex-none px-8 gap-3 ${mostrandoFormulario ? 'bg-rose-500 hover:bg-rose-600 shadow-rose-500/20' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20'}`}
                         >
                             {mostrandoFormulario ? <X size={20} /> : <Plus size={20} />}
@@ -205,7 +255,7 @@ const StoreManageSuppliers = () => {
                                     type="submit"
                                     className="btn-primary px-12 h-[60px] bg-indigo-600 border-none shadow-indigo-500/20"
                                 >
-                                    <Save size={20} /> {editandoId ? "SINCROZINAR CAMBIOS" : "CONFIRMAR VINCULACIÓN"}
+                                    <Save size={20} /> {editandoId ? "SINCRONIZAR CAMBIOS" : "CONFIRMAR VINCULACIÓN"}
                                 </button>
                             </div>
                         </form>
@@ -225,7 +275,7 @@ const StoreManageSuppliers = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                {proveedores.length === 0 ? (
+                                {(!Array.isArray(proveedores) || proveedores.length === 0) ? (
                                     <tr>
                                         <td colSpan="4" className="px-8 py-24 text-center">
                                             <div className="flex flex-col items-center gap-6 opacity-20">
@@ -235,7 +285,7 @@ const StoreManageSuppliers = () => {
                                         </td>
                                     </tr>
                                 ) : (
-                                    proveedores.map((p) => (
+                                    Array.isArray(proveedores) && proveedores.map((p) => (
                                         <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/20 transition-all group">
                                             <td className="px-8 py-6">
                                                 <div className="flex items-center gap-5">
@@ -294,6 +344,14 @@ const StoreManageSuppliers = () => {
                     </div>
                 </div>
             </div>
+
+            <PinValidationModal 
+                isOpen={showPinModal}
+                onClose={() => { setShowPinModal(false); setPendingAction(null); }}
+                onSuccess={handlePinSuccess}
+                title="Autorización Proveedores"
+                actionType="M_PROVEEDORES"
+            />
         </div>
     );
 };

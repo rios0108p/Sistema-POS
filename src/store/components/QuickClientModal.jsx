@@ -8,13 +8,13 @@ export default function QuickClientModal({ isOpen, onClose, onSuccess }) {
     const { user } = useAuth();
     const isAdmin = user?.rol === 'admin';
 
-    if (!isOpen) return null;
-
     const [formData, setFormData] = useState({
         nombre: '',
         telefono: '',
         email: ''
     });
+
+    if (!isOpen) return null;
 
     const handleSubmit = async (e) => {
         e.preventDefault();

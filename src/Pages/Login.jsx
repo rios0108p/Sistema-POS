@@ -1,13 +1,17 @@
+// Build timestamp: 2026-03-05T12:40:00
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
+import { useNetwork } from "../context/NetworkContext";
 import { authAPI } from "../services/api";
-import { User, Lock, ArrowRight, Store, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { User, Lock, ArrowRight, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import Icono from "../assets/ICONO.png";
 
 const Login = () => {
   const navigate = useNavigate();
-  const { login, storeConfig } = useAuth();
+  const { login, loginOffline, storeConfig } = useAuth();
+  const { isOnline } = useNetwork();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,12 +22,25 @@ const Login = () => {
     setLoading(true);
 
     try {
-      const data = await authAPI.login(username, password);
-      login(data.user, data.token, data.turnoActivo);
-      toast.success(`Bienvenido, ${data.user.username}`);
+      if (isOnline) {
+        const data = await authAPI.login(username, password);
+        await login(data.user, data.token, data.turnoActivo, password);
+        toast.success(`Bienvenido, ${data.user.username}`);
+      } else {
+        const data = await loginOffline(username, password);
+        toast.success(`Modo Offline: Bienvenido, ${data.user.username}`, {
+          icon: '📡',
+          duration: 4000
+        });
+      }
       navigate("/store");
     } catch (error) {
-      toast.error(error.message || "Credenciales incorrectas");
+      const errorMsg = error.message || "Credenciales incorrectas";
+      if (!isOnline && errorMsg.includes("Failed to fetch")) {
+        toast.error("No hay conexión y no tienes una sesión guardada");
+      } else {
+        toast.error(errorMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -41,22 +58,23 @@ const Login = () => {
           {/* Brand Header */}
           <div className="text-center mb-10">
             <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white/10 border border-white/20 mb-4 p-2 shadow-inner overflow-hidden">
-              {storeConfig?.logoUrl ? (
-                <img
-                  src={storeConfig.logoUrl}
-                  alt="Logo"
-                  className="w-full h-full object-contain"
-                  onError={(e) => { e.target.src = "https://cdn-icons-png.flaticon.com/512/606/606114.png" }}
-                />
-              ) : (
-                <Store className="text-white opacity-50" size={32} />
-              )
-              }
+              <img
+                src={Icono}
+                alt="TENDO-POS Logo"
+                className="w-full h-full object-contain"
+              />
             </div>
             <h1 className="text-3xl font-black text-white tracking-tight uppercase">
-              {storeConfig?.nombre_tienda || "ADMIN PANEL"}
+              TENDO-POS
             </h1>
             <p className="text-slate-400 font-medium text-sm mt-1">Identifícate para entrar al sistema</p>
+            
+            {!isOnline && (
+              <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-amber-500/20 border border-amber-500/30 rounded-full text-amber-500 text-[10px] font-bold uppercase tracking-widest">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                Modo Offline - Sesión Guardada
+              </div>
+            )}
           </div>
 
           <form onSubmit={handleLogin} className="space-y-6">
@@ -106,7 +124,7 @@ const Login = () => {
             >
               <div className="bg-slate-900 group-hover:bg-transparent transition-colors rounded-2xl py-4 flex items-center justify-center gap-2">
                 <span className="text-white font-bold tracking-wide uppercase text-sm">
-                  {loading ? "Iniciando sesión..." : "Acceder al Sistema"}
+                  {loading ? "Iniciando sesión..." : isOnline ? "Acceder al Sistema" : "Acceder Offline"}
                 </span>
                 {!loading && <ArrowRight className="text-white group-hover:translate-x-1 transition-transform" size={18} />}
               </div>
@@ -124,7 +142,7 @@ const Login = () => {
 
         {/* Footer Credit */}
         <p className="mt-8 text-center text-slate-600 text-[10px] uppercase font-bold tracking-widest">
-          &copy; 2026 {storeConfig?.nombre_tienda || "ADMIN"} - Gestionado por Antigravity v2.0
+          &copy; 2026 TENDO-POS
         </p>
       </div>
     </div>

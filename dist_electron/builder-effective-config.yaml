@@ -1,0 +1,36 @@
+directories:
+  output: dist_electron
+  buildResources: build
+appId: com.tendo.pos.professional
+productName: TENDO-POS Professional
+copyright: Copyright © 2026 TENDO
+files:
+  - filter:
+      - dist/**/*
+      - electron/**/*
+      - src/services/db/**/*
+      - src/services/sync/**/*
+      - build/icon.ico
+      - package.json
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - zip
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: TENDO-POS
+extraMetadata:
+  main: electron/main.cjs
+buildDependenciesFromSource: false
+npmRebuild: true
+electronVersion: 41.0.2

@@ -5,6 +5,7 @@ import {
     Search,
     Plus,
     Edit,
+    Edit3,
     Trash2,
     FileText,
     Phone,
@@ -16,11 +17,13 @@ import {
     Clock,
     X,
     Table,
-    DollarSign
+    DollarSign,
+    Banknote
 } from "lucide-react";
 import { clientesAPI, productosAPI, getImageUrl } from "../services/api";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
+import useOfflineOperation from "../hooks/useOfflineOperation";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
 import { QRCodeCanvas } from "qrcode.react";
 import Barcode from "react-barcode";
@@ -34,6 +37,10 @@ export default function ManageCustomers() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
 
+    const { execute: executeClient } = useOfflineOperation('clients');
+    const { execute: executeSpecialPrice } = useOfflineOperation('client_special_prices');
+    const { execute: executeAbono } = useOfflineOperation('client_abonos');
+
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingCliente, setEditingCliente] = useState(null);
     const [formData, setFormData] = useState({
@@ -42,7 +49,9 @@ export default function ManageCustomers() {
         telefono: "",
         direccion: "",
         nit_dpi: "",
-        codigo_barras: ""
+        codigo_barras: "",
+        credito_habilitado: false,
+        limite_credito: 0
     });
 
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -58,6 +67,13 @@ export default function ManageCustomers() {
     const [newSpecial, setNewSpecial] = useState({ producto_id: "", precio_especial: "", min_cantidad: 1 });
 
     const [isIdCardOpen, setIsIdCardOpen] = useState(false);
+    const [isAbonoModalOpen, setIsAbonoModalOpen] = useState(false);
+    const [abonoData, setAbonoData] = useState({
+        monto: "",
+        metodo_pago: "EFECTIVO",
+        nota: ""
+    });
+    const [isSavingAbono, setIsSavingAbono] = useState(false);
 
     useEffect(() => {
         fetchClientes();
@@ -84,7 +100,9 @@ export default function ManageCustomers() {
                 telefono: cliente.telefono || "",
                 direccion: cliente.direccion || "",
                 nit_dpi: cliente.nit_dpi || "",
-                codigo_barras: cliente.codigo_barras || ""
+                codigo_barras: cliente.codigo_barras || "",
+                credito_habilitado: !!cliente.credito_habilitado,
+                limite_credito: cliente.limite_credito || 0
             });
         } else {
             setEditingCliente(null);
@@ -94,20 +112,29 @@ export default function ManageCustomers() {
                 telefono: "",
                 direccion: "",
                 nit_dpi: "",
-                codigo_barras: ""
+                codigo_barras: "",
+                credito_habilitado: false,
+                limite_credito: 0
             });
         }
         setIsModalOpen(true);
+    };
+
+    const generateRandomID = () => {
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        const newID = `CLI-${randomNum}`;
+        setFormData(prev => ({ ...prev, codigo_barras: newID }));
+        toast.success(`ID de Membresía: ${newID}`);
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         try {
             if (editingCliente) {
-                await clientesAPI.update(editingCliente.id, formData);
+                await executeClient('update', formData, editingCliente.id);
                 toast.success("Cliente actualizado");
             } else {
-                await clientesAPI.create(formData);
+                await executeClient('insert', formData);
                 toast.success("Cliente registrado con éxito");
             }
             setIsModalOpen(false);
@@ -120,7 +147,7 @@ export default function ManageCustomers() {
     const handleDelete = async (id) => {
         if (!window.confirm("¿Estás seguro de eliminar este registro de cliente?")) return;
         try {
-            await clientesAPI.delete(id);
+            await executeClient('delete', {}, id);
             toast.success("Cliente eliminado del registro");
             fetchClientes();
         } catch (error) {
@@ -134,7 +161,30 @@ export default function ManageCustomers() {
         setLoadingHistory(true);
         try {
             const data = await clientesAPI.getHistory(cliente.id);
-            setClientHistory(data.ventas || []);
+
+            // Combinar ventas y abonos en un solo historial cronológico
+            const ventasNormalizadas = (data.ventas || []).map(v => ({
+                ...v,
+                tipo_evento: 'VENTA',
+                monto_operado: v.total,
+                metodo_display: v.metodo_detalle || v.metodo_pago
+            }));
+
+            const abonosNormalizados = (data.abonos || []).map(a => ({
+                ...a,
+                tipo_evento: 'ABONO',
+                total: a.monto,
+                monto_operado: a.monto,
+                resumen_productos: `ABONO RECIBIDO: ${a.nota || 'Sin nota'}`,
+                metodo_display: a.metodo_pago,
+                tienda_nombre: 'CAJA (ADMIN)'
+            }));
+
+            const historialCombinado = [...ventasNormalizadas, ...abonosNormalizados].sort((a, b) =>
+                new Date(b.fecha) - new Date(a.fecha)
+            );
+
+            setClientHistory(historialCombinado);
         } catch (error) {
             console.error(error);
             toast.error("No se pudo sincronizar el historial");
@@ -148,10 +198,11 @@ export default function ManageCustomers() {
         setIsSpecialPriceOpen(true);
         setLoadingSpecial(true);
         try {
-            // Load products if not loaded
+            // Load products only once - use a flag to avoid duplicate API calls
+            // even if the catalog returns an empty array
             if (productos.length === 0) {
                 const prods = await productosAPI.getAll();
-                setProductos(prods);
+                if (prods && prods.length > 0) setProductos(prods);
             }
             // Load current special prices
             const specials = await clientesAPI.getPreciosEspeciales(cliente.id);
@@ -166,8 +217,16 @@ export default function ManageCustomers() {
 
     const handleAddSpecialPrice = async () => {
         if (!newSpecial.producto_id || !newSpecial.precio_especial) return toast.error("Completa los datos");
+        // Bug #16: Validate special price is lower than regular price
+        const prod = productos.find(p => p.id == newSpecial.producto_id);
+        if (prod && parseFloat(newSpecial.precio_especial) >= parseFloat(prod.precio_venta)) {
+            return toast.error(`El precio especial debe ser menor al precio regular ($${prod.precio_venta})`);
+        }
         try {
-            await clientesAPI.savePrecioEspecial(selectedClient.id, newSpecial);
+            await executeSpecialPrice('insert', {
+                cliente_id: selectedClient.id,
+                ...newSpecial
+            });
             toast.success("Precio asignado");
             setNewSpecial({ producto_id: "", precio_especial: "", min_cantidad: 1 });
             // Refresh list
@@ -180,11 +239,42 @@ export default function ManageCustomers() {
 
     const handleDeleteSpecialPrice = async (productoId) => {
         try {
-            await clientesAPI.deletePrecioEspecial(selectedClient.id, productoId);
+            await executeSpecialPrice('delete', { producto_id: productoId, cliente_id: selectedClient.id }, `${selectedClient.id}_${productoId}`);
             setPreciosEspeciales(preciosEspeciales.filter(p => p.producto_id !== productoId));
             toast.success("Precio eliminado");
         } catch (error) {
             toast.error("Error eliminando precio");
+        }
+    };
+
+    const handleOpenAbono = (cliente) => {
+        setSelectedClient(cliente);
+        setAbonoData({
+            monto: "",
+            metodo_pago: "EFECTIVO",
+            nota: ""
+        });
+        setIsAbonoModalOpen(true);
+    };
+
+    const handleRegistrarAbono = async (e) => {
+        e.preventDefault();
+        if (!abonoData.monto || abonoData.monto <= 0) return toast.error("Ingresa un monto válido");
+
+        setIsSavingAbono(true);
+        try {
+            await executeAbono('insert', {
+                cliente_id: selectedClient.id,
+                ...abonoData,
+                usuario_id: user?.id
+            });
+            toast.success("Abono registrado correctamente");
+            setIsAbonoModalOpen(false);
+            fetchClientes(); // Refrescar saldos
+        } catch (error) {
+            toast.error(error.message || "Error al registrar abono");
+        } finally {
+            setIsSavingAbono(false);
         }
     };
 
@@ -281,7 +371,7 @@ export default function ManageCustomers() {
                     <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600 group-focus-within:text-indigo-500 transition-colors" size={24} />
                     <input
                         type="text"
-                        placeholder="Búsqueda inteligente por nombre, email o identificación (NIT/DPI)..."
+                        placeholder="Búsqueda inteligente por nombre, email o identificación (RFC/CURP)..."
                         className="w-full pl-16 pr-8 py-5 bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-[1.5rem] focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 transition-all text-slate-800 dark:text-white font-bold placeholder:text-slate-300 placeholder:font-normal"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
@@ -317,12 +407,14 @@ export default function ManageCustomers() {
                                     >
                                         <Edit size={18} />
                                     </button>
+                                    {isAdmin && (
                                     <button
                                         onClick={() => handleDelete(cliente.id)}
                                         className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-xl transition-all shadow-md active:scale-90"
                                     >
                                         <Trash2 size={18} />
                                     </button>
+                                    )}
                                 </div>
                             </div>
 
@@ -354,16 +446,51 @@ export default function ManageCustomers() {
                                         <span className="line-clamp-2 leading-relaxed opacity-60 font-medium">{cliente.direccion}</span>
                                     </div>
                                 )}
+                                <div className="pt-2">
+                                    <div className={`flex items-center justify-between p-2.5 rounded-xl border ${cliente.credito_habilitado ? 'bg-indigo-50/50 border-indigo-100 dark:bg-indigo-900/20 dark:border-indigo-800' : 'bg-slate-50 border-slate-100 opacity-50 dark:bg-slate-800 dark:border-slate-700'}`}>
+                                        <div className="flex items-center gap-2">
+                                            <div className={`w-2 h-2 rounded-full ${cliente.credito_habilitado ? 'bg-indigo-500' : 'bg-slate-300'}`}></div>
+                                            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Crédito</span>
+                                        </div>
+                                        <div className="text-right">
+                                            {cliente.credito_habilitado ? (
+                                                <>
+                                                    {(() => {
+                                                        const disponible = (cliente.limite_credito || 0) - (cliente.saldo_deudor || 0);
+                                                        return (
+                                                            <>
+                                                                <p className={`text-[10px] font-black leading-none ${disponible < 0 ? 'text-rose-600' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                                                                    DISP: ${disponible.toFixed(2)}
+                                                                </p>
+                                                                <p className="text-[8px] font-bold text-slate-400 mt-0.5">DEUDA: ${Number(cliente.saldo_deudor || 0).toFixed(2)}</p>
+                                                            </>
+                                                        );
+                                                    })()}
+                                                </>
+                                            ) : (
+                                                <span className="text-[9px] font-black text-slate-300">INACTIVO</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="mt-8 pt-6 border-t dark:border-slate-700/50 flex flex-wrap gap-2 justify-end">
                                 {isAdmin && (
-                                    <button
-                                        onClick={() => handleOpenSpecialPrices(cliente)}
-                                        className="px-4 py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40 text-[9px] font-bold uppercase text-amber-600 dark:text-amber-400 hover:bg-amber-100 transition-all rounded-xl tracking-widest flex items-center gap-2 shadow-sm"
-                                    >
-                                        <DollarSign size={14} /> PRECIOS ESPECIALES
-                                    </button>
+                                    <>
+                                        <button
+                                            onClick={() => handleOpenSpecialPrices(cliente)}
+                                            className="px-4 py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40 text-[9px] font-bold uppercase text-amber-600 dark:text-amber-400 hover:bg-amber-100 transition-all rounded-xl tracking-widest flex items-center gap-2 shadow-sm"
+                                        >
+                                            <DollarSign size={14} /> PRECIOS ESPECIALES
+                                        </button>
+                                        <button
+                                            onClick={() => handleOpenAbono(cliente)}
+                                            className="px-4 py-2.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800/40 text-[9px] font-bold uppercase text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 transition-all rounded-xl tracking-widest flex items-center gap-2 shadow-sm"
+                                        >
+                                            <Banknote size={14} /> REGISTRAR ABONO
+                                        </button>
+                                    </>
                                 )}
                                 <button
                                     onClick={() => handleViewHistory(cliente)}
@@ -372,14 +499,14 @@ export default function ManageCustomers() {
                                     AUDITAR ACTIVIDAD
                                     <ChevronRight size={14} className="group-hover/btn:translate-x-1 transition-transform" />
                                 </button>
-                                {isAdmin || user?.rol === 'vendedor' ? (
+                                {isAdmin && (
                                     <button
                                         onClick={() => { setSelectedClient(cliente); setIsIdCardOpen(true); }}
                                         className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white border-2 border-indigo-500 rounded-xl text-[9px] font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg active:scale-95"
                                     >
                                         <CreditCard size={14} /> TARJETA DIGITAL
                                     </button>
-                                ) : null}
+                                )}
                             </div>
                         </div>
                     ))
@@ -390,12 +517,12 @@ export default function ManageCustomers() {
             {isIdCardOpen && selectedClient && (
                 <div className="modal-overlay">
                     <div className="modal-container w-full max-w-md p-0 overflow-hidden flex flex-col">
-                        <div className="modal-header px-10 py-8 flex justify-between items-center">
+                        <div className="modal-header px-8 py-6 flex justify-between items-center bg-slate-50 dark:bg-slate-800">
                             <h2 className="text-xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter">Tarjeta de Cliente</h2>
                             <button onClick={() => setIsIdCardOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
                         </div>
 
-                        <div className="p-10 flex flex-col items-center gap-8 bg-slate-50/50 dark:bg-slate-900/50">
+                        <div className="p-8 flex flex-col items-center gap-8 bg-slate-50/50 dark:bg-slate-900/50">
                             {/* Tarjeta para Captura */}
                             <div
                                 id="customer-id-card"
@@ -454,10 +581,10 @@ export default function ManageCustomers() {
                                     zIndex: 10,
                                     boxShadow: '0 10px 25px -5px rgba(0,0,0,0.2)'
                                 }}>
-                                    <QRCodeCanvas value={selectedClient.nit_dpi || selectedClient.id.toString()} size={120} />
+                                    <QRCodeCanvas value={selectedClient.codigo_barras || selectedClient.nit_dpi || selectedClient.id.toString()} size={120} />
                                     <div style={{ width: '100%', display: 'flex', justifyContent: 'center', marginTop: '0.5rem' }}>
                                         <Barcode
-                                            value={selectedClient.codigo_barras || (selectedClient.nit_dpi?.length > 4 ? selectedClient.nit_dpi : "0000000")}
+                                            value={selectedClient.codigo_barras || selectedClient.nit_dpi || selectedClient.id.toString()}
                                             width={1.5}
                                             height={40}
                                             fontSize={12}
@@ -500,7 +627,7 @@ export default function ManageCustomers() {
             {isSpecialPriceOpen && (
                 <div className="modal-overlay">
                     <div className="modal-container w-full max-w-2xl max-h-[85vh] flex flex-col p-0">
-                        <div className="modal-header px-10 py-8 bg-amber-50/50 dark:bg-amber-900/10 flex justify-between items-center">
+                        <div className="modal-header px-8 py-6 bg-amber-50/50 dark:bg-amber-900/10 flex justify-between items-center border-b dark:border-amber-900/40">
                             <div>
                                 <h2 className="text-xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter">Precios Especiales</h2>
                                 <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Cliente: {selectedClient?.nombre}</p>
@@ -532,8 +659,8 @@ export default function ManageCustomers() {
                                             type="number"
                                             placeholder="1"
                                             className="input-standard"
-                                            value={newSpecial.min_cantidad}
-                                            onChange={e => setNewSpecial({ ...newSpecial, min_cantidad: Number(e.target.value) })}
+                                            value={newSpecial.min_cantidad || ""}
+                                            onChange={e => setNewSpecial({ ...newSpecial, min_cantidad: e.target.value === "" ? null : Number(e.target.value) })}
                                         />
                                     </div>
                                     <div className="md:col-span-4 flex items-end gap-2">
@@ -543,8 +670,8 @@ export default function ManageCustomers() {
                                                 type="number"
                                                 placeholder="0.00"
                                                 className="input-standard"
-                                                value={newSpecial.precio_especial}
-                                                onChange={e => setNewSpecial({ ...newSpecial, precio_especial: e.target.value })}
+                                                value={newSpecial.precio_especial || ""}
+                                                onChange={e => setNewSpecial({ ...newSpecial, precio_especial: e.target.value === "" ? null : e.target.value })}
                                             />
                                         </div>
                                         <button
@@ -579,6 +706,18 @@ export default function ManageCustomers() {
                                                 <div className="flex items-center gap-6">
                                                     <span className="text-lg font-bold text-amber-600 tracking-tighter">${ps.precio_especial}</span>
                                                     <button
+                                                        onClick={() => {
+                                                            setNewSpecial({
+                                                                producto_id: ps.producto_id,
+                                                                min_cantidad: ps.min_cantidad,
+                                                                precio_especial: ps.precio_especial
+                                                            });
+                                                        }}
+                                                        className="p-2 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-all"
+                                                    >
+                                                        <Edit3 size={16} />
+                                                    </button>
+                                                    <button
                                                         onClick={() => handleDeleteSpecialPrice(ps.producto_id)}
                                                         className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                                                     >
@@ -602,7 +741,7 @@ export default function ManageCustomers() {
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="modal-container w-full max-w-lg overflow-hidden border border-white/20">
-                        <div className="px-10 py-10">
+                        <div className="px-8 py-8">
                             <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2 uppercase tracking-tighter leading-none">
                                 {editingCliente ? "Actualizar Perfil" : "Vincular Nuevo Cliente"}
                             </h2>
@@ -621,17 +760,44 @@ export default function ManageCustomers() {
                                     />
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-6">
-                                    <div>
-                                        <label className="label-standard ml-1">NIT / DPI</label>
-                                        <input
-                                            type="text"
-                                            className="input-standard"
-                                            value={formData.nit_dpi}
-                                            onChange={e => setFormData({ ...formData, nit_dpi: e.target.value })}
-                                            placeholder="Identificación"
-                                        />
+                                <div className="p-6 bg-slate-50 dark:bg-slate-900/50 rounded-3xl border-2 border-dashed border-indigo-100 dark:border-indigo-500/20 mb-6">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <label className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                                            <CreditCard size={14} /> Identificación de Membresía
+                                        </label>
+                                        <button 
+                                            type="button"
+                                            onClick={generateRandomID}
+                                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-bold px-4 py-2 rounded-full uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center gap-2"
+                                        >
+                                            <Plus size={12} strokeWidth={3} /> Autogenerar ID
+                                        </button>
                                     </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="label-standard ml-1">Código / Barras</label>
+                                            <input
+                                                type="text"
+                                                className="input-standard h-12 bg-white dark:bg-slate-800"
+                                                value={formData.codigo_barras}
+                                                onChange={e => setFormData({ ...formData, codigo_barras: e.target.value })}
+                                                placeholder="Ej: CLI-1234"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="label-standard ml-1">RFC / CURP</label>
+                                            <input
+                                                type="text"
+                                                className="input-standard h-12 bg-white dark:bg-slate-800"
+                                                value={formData.nit_dpi}
+                                                onChange={e => setFormData({ ...formData, nit_dpi: e.target.value })}
+                                                placeholder="Opcional"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div>
                                         <label className="label-standard ml-1">Teléfono</label>
                                         <input
@@ -665,6 +831,43 @@ export default function ManageCustomers() {
                                         placeholder="Dirección física"
                                     ></textarea>
                                 </div>
+
+                                {isAdmin && (
+                                    <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-3xl border dark:border-slate-700/50 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Configuración de Crédito</h3>
+                                                <p className="text-[8px] font-bold text-slate-400 uppercase">Habilitar ventas a crédito con límite</p>
+                                            </div>
+                                            <label className="relative inline-flex items-center cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    className="sr-only peer"
+                                                    checked={formData.credito_habilitado}
+                                                    onChange={e => setFormData({ ...formData, credito_habilitado: e.target.checked })}
+                                                />
+                                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                                            </label>
+                                        </div>
+
+                                        {formData.credito_habilitado && (
+                                            <div className="animate-in slide-in-from-top-2 duration-300">
+                                                <label className="label-standard ml-1">Límite de Crédito ($)</label>
+                                                <div className="relative">
+                                                    <DollarSign size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        className="input-standard pl-12"
+                                                        value={formData.limite_credito}
+                                                        onChange={e => setFormData({ ...formData, limite_credito: e.target.value })}
+                                                        placeholder="0.00"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
                                 <div className="pt-6 flex flex-col gap-3">
                                     <button
@@ -725,26 +928,31 @@ export default function ManageCustomers() {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                        {clientHistory.map((venta) => (
-                                            <tr key={venta.id} className={`hover:bg-indigo-50/20 dark:hover:bg-indigo-900/10 transition-colors group ${venta.estado === 'CANCELADA' ? 'opacity-50 grayscale' : ''}`}>
+                                        {clientHistory.map((evento, index) => (
+                                            <tr key={index} className={`hover:bg-indigo-50/20 dark:hover:bg-indigo-900/10 transition-colors group ${evento.estado === 'CANCELADA' ? 'opacity-50 grayscale' : ''}`}>
                                                 <td className="px-8 py-5">
                                                     <div className="flex flex-col">
-                                                        <span className="text-slate-400 dark:text-slate-500 font-bold text-[10px] uppercase tracking-widest">{new Date(venta.fecha).toLocaleDateString()}</span>
-                                                        <span className="text-[10px] font-bold text-slate-800 dark:text-slate-300 uppercase">{venta.tienda_nombre || 'Sede Central'}</span>
+                                                        <span className="text-slate-400 dark:text-slate-500 font-bold text-[10px] uppercase tracking-widest">{new Date(evento.fecha.replace(/-/g, '\/')).toLocaleDateString()}</span>
+                                                        <span className="text-[10px] font-bold text-slate-800 dark:text-slate-300 uppercase">{evento.tienda_nombre || 'Sede Central'}</span>
                                                     </div>
                                                 </td>
                                                 <td className="px-8 py-5">
-                                                    <p className={`text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-tighter truncate max-w-[200px] ${venta.estado === 'CANCELADA' ? 'line-through' : ''}`}>
-                                                        {venta.resumen_productos}
-                                                    </p>
-                                                    <span className="text-[8px] font-bold text-slate-400">ID VENTA: #{venta.id}</span>
+                                                    <div className="flex flex-col">
+                                                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-md w-max mb-1 uppercase tracking-widest ${evento.tipo_evento === 'ABONO' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30' : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30'}`}>
+                                                            {evento.tipo_evento === 'ABONO' ? 'PAGO / ABONO' : 'COMPRA'}
+                                                        </span>
+                                                        <p className={`text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-tighter truncate max-w-[200px] ${evento.estado === 'CANCELADA' ? 'line-through' : ''}`}>
+                                                            {evento.resumen_productos}
+                                                        </p>
+                                                        <span className="text-[8px] font-bold text-slate-400">ID: #{evento.id}</span>
+                                                    </div>
                                                 </td>
                                                 <td className="px-8 py-5 text-right">
-                                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{venta.metodo_pago}</span>
+                                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{evento.metodo_display}</span>
                                                 </td>
                                                 <td className="px-8 py-5 text-right">
-                                                    <span className={`text-base font-bold tracking-tighter ${venta.estado === 'CANCELADA' ? 'text-slate-400 line-through' : 'text-indigo-600 dark:text-indigo-400'}`}>
-                                                        {storeConfig?.moneda || '$'} {Number(venta.total).toFixed(1)}
+                                                    <span className={`text-base font-bold tracking-tighter ${evento.tipo_evento === 'ABONO' ? 'text-emerald-600 dark:text-emerald-400' : (evento.estado === 'CANCELADA' ? 'text-slate-400 line-through' : 'text-indigo-600 dark:text-indigo-400')}`}>
+                                                        {evento.tipo_evento === 'ABONO' ? '-' : ''}{storeConfig?.moneda || '$'} {Number(evento.monto_operado).toFixed(2)}
                                                     </span>
                                                 </td>
                                             </tr>
@@ -757,15 +965,15 @@ export default function ManageCustomers() {
                         <div className="p-10 border-t dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col md:flex-row gap-4 items-center justify-between">
                             <div className="flex gap-3">
                                 <button onClick={() => {
-                                    const data = clientHistory.map(v => ({ Fecha: new Date(v.fecha).toLocaleDateString(), Sucursal: v.tienda_nombre || 'Sede Central', Productos: v.resumen_productos, Total: v.total, Estado: v.estado }));
+                                    const data = clientHistory.map(v => ({ Cronología: new Date(v.fecha.replace(/-/g, '\/')).toLocaleDateString(), Tipo: v.tipo_evento, Detalle: v.resumen_productos, Métodos: v.metodo_display, Monto: v.monto_operado }));
                                     exportToExcel(data, `Historial_${selectedClient?.nombre}`, 'Historial');
                                 }} className="h-[40px] px-5 rounded-xl flex items-center gap-2.5 bg-white dark:bg-slate-800 text-emerald-600 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-emerald-50 dark:hover:bg-emerald-900/10 transition-all group">
                                     <Table size={14} className="group-hover:scale-110 transition-transform" />
                                     <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600">EXCEL</span>
                                 </button>
                                 <button onClick={() => {
-                                    const headers = ['Fecha', 'Sucursal', 'Productos', 'Total', 'Estado'];
-                                    const data = clientHistory.map(v => [new Date(v.fecha).toLocaleDateString(), v.tienda_nombre || 'Sede Central', v.resumen_productos, `${storeConfig?.moneda || '$'} ${Number(v.total).toFixed(1)}`, v.estado]);
+                                    const headers = ['Fecha', 'Tipo', 'Detalle', 'Métodos', 'Monto'];
+                                    const data = clientHistory.map(v => [new Date(v.fecha.replace(/-/g, '\/')).toLocaleDateString(), v.tipo_evento, v.resumen_productos, v.metodo_display, `${storeConfig?.moneda || '$'} ${Number(v.monto_operado).toFixed(2)}`]);
                                     exportToPDF({ title: `Auditoría: ${selectedClient?.nombre}`, headers, data, fileName: `Historial_${selectedClient?.nombre}` });
                                 }} className="h-[40px] px-5 rounded-xl flex items-center gap-2.5 bg-white dark:bg-slate-800 text-rose-600 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-rose-50 dark:hover:bg-rose-900/10 transition-all group">
                                     <FileText size={14} className="group-hover:scale-110 transition-transform" />
@@ -778,6 +986,87 @@ export default function ManageCustomers() {
                             >
                                 Cerrar Auditoría
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Registrar Abono */}
+            {isAbonoModalOpen && selectedClient && (
+                <div className="modal-overlay">
+                    <div className="modal-container w-full max-w-md overflow-hidden border border-white/20">
+                        <div className="px-10 py-10">
+                            <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2 uppercase tracking-tighter leading-none">
+                                Registrar Abono
+                            </h2>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-10">Cliente: {selectedClient.nombre}</p>
+
+                            <form onSubmit={handleRegistrarAbono} className="space-y-6">
+                                <div className="p-6 bg-rose-50 dark:bg-rose-900/20 rounded-3xl border border-rose-100 dark:border-rose-800/40 mb-6">
+                                    <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Deuda Pendiente Actual</p>
+                                    <p className="text-3xl font-black text-rose-600 tracking-tighter">${Number(selectedClient.saldo_deudor || 0).toFixed(2)}</p>
+                                </div>
+
+                                <div>
+                                    <label className="label-standard ml-1">Monto del Abono ($)</label>
+                                    <div className="relative">
+                                        <DollarSign size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            max={selectedClient.saldo_deudor}
+                                            required
+                                            className="input-standard pl-12"
+                                            value={abonoData.monto}
+                                            onChange={e => setAbonoData({ ...abonoData, monto: e.target.value })}
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                    <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase tracking-widest ml-1">El monto no puede exceder la deuda actual</p>
+                                </div>
+
+                                <div>
+                                    <label className="label-standard ml-1">Método de Pago</label>
+                                    <select
+                                        className="select-standard uppercase font-black text-[10px] tracking-widest"
+                                        value={abonoData.metodo_pago}
+                                        onChange={e => setAbonoData({ ...abonoData, metodo_pago: e.target.value })}
+                                    >
+                                        <option value="EFECTIVO">EFECTIVO</option>
+                                        <option value="TARJETA">TARJETA</option>
+                                        <option value="TRANSFERENCIA">TRANSFERENCIA</option>
+                                        <option value="OTRO">OTRO</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="label-standard ml-1">Nota / Referencia</label>
+                                    <textarea
+                                        rows="2"
+                                        className="input-standard"
+                                        value={abonoData.nota}
+                                        onChange={e => setAbonoData({ ...abonoData, nota: e.target.value })}
+                                        placeholder="Ej: Pago de factura #123 o Referencia Bancaria"
+                                    ></textarea>
+                                </div>
+
+                                <div className="pt-6 flex flex-col gap-3">
+                                    <button
+                                        type="submit"
+                                        disabled={isSavingAbono}
+                                        className="btn-primary"
+                                    >
+                                        {isSavingAbono ? "Procesando..." : "Confirmar Abono"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsAbonoModalOpen(false)}
+                                        className="btn-secondary w-full justify-center"
+                                    >
+                                        Cancelar
+                                    </button>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 </div>

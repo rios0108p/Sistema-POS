@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../config/db.js';
+import { checkTienda } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -25,7 +26,7 @@ router.get('/', async (req, res) => {
 });
 
 // Obtener tienda por ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', checkTienda, async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await db.query('SELECT * FROM tiendas WHERE id = ?', [id]);
@@ -44,15 +45,15 @@ router.get('/:id', async (req, res) => {
 // Crear nueva tienda
 router.post('/', async (req, res) => {
     try {
-        const { nombre, tipo, direccion, telefono, monto_base } = req.body;
+        const { nombre, tipo, direccion, telefono, monto_base, ticket_header, ticket_footer, rfc } = req.body;
 
         if (!nombre) {
             return res.status(400).json({ error: 'El nombre es requerido' });
         }
 
         const [result] = await db.query(
-            'INSERT INTO tiendas (nombre, tipo, direccion, telefono, monto_base) VALUES (?, ?, ?, ?, ?)',
-            [nombre, tipo || 'GENERAL', direccion || '', telefono || '', monto_base || 500]
+            'INSERT INTO tiendas (nombre, tipo, direccion, telefono, monto_base, ticket_header, ticket_footer, rfc) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [nombre, tipo || 'GENERAL', direccion || '', telefono || '', monto_base || 500, ticket_header || null, ticket_footer || null, rfc || null]
         );
 
         res.status(201).json({
@@ -69,11 +70,11 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, tipo, direccion, telefono, monto_base, activa } = req.body;
+        const { nombre, tipo, direccion, telefono, monto_base, activa, ticket_header, ticket_footer, rfc } = req.body;
 
         await db.query(
-            'UPDATE tiendas SET nombre = ?, tipo = ?, direccion = ?, telefono = ?, monto_base = ?, activa = ? WHERE id = ?',
-            [nombre, tipo, direccion, telefono, monto_base, activa !== false, id]
+            'UPDATE tiendas SET nombre = ?, tipo = ?, direccion = ?, telefono = ?, monto_base = ?, activa = ?, ticket_header = ?, ticket_footer = ?, rfc = ? WHERE id = ?',
+            [nombre, tipo, direccion, telefono, monto_base, activa !== false, ticket_header || null, ticket_footer || null, rfc || null, id]
         );
 
         res.json({ message: 'Tienda actualizada exitosamente' });
@@ -134,7 +135,7 @@ router.get('/inventario/bajo', async (req, res) => {
 });
 
 // Obtener productos de una tienda
-router.get('/:id/productos', async (req, res) => {
+router.get('/:id/productos', checkTienda, async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await db.query(`
@@ -198,7 +199,7 @@ router.get('/:id/productos', async (req, res) => {
 });
 
 // Asignar/Trasladar producto a tienda
-router.post('/:id/productos', async (req, res) => {
+router.post('/:id/productos', checkTienda, async (req, res) => {
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
@@ -270,7 +271,7 @@ router.post('/:id/productos', async (req, res) => {
 });
 
 // Actualizar inventario de producto en tienda
-router.put('/:tiendaId/productos/:productoId', async (req, res) => {
+router.put('/:tiendaId/productos/:productoId', checkTienda, async (req, res) => {
     try {
         const { tiendaId, productoId } = req.params;
         const { cantidad, stock_minimo, activo } = req.body;
@@ -288,7 +289,7 @@ router.put('/:tiendaId/productos/:productoId', async (req, res) => {
 });
 
 // Eliminar producto de tienda
-router.delete('/:tiendaId/productos/:productoId', async (req, res) => {
+router.delete('/:tiendaId/productos/:productoId', checkTienda, async (req, res) => {
     try {
         const { tiendaId, productoId } = req.params;
 
@@ -309,7 +310,7 @@ router.delete('/:tiendaId/productos/:productoId', async (req, res) => {
 // ========================================
 
 // Obtener empleados de una tienda
-router.get('/:id/empleados', async (req, res) => {
+router.get('/:id/empleados', checkTienda, async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await db.query(`
@@ -331,7 +332,7 @@ router.get('/:id/empleados', async (req, res) => {
 // ========================================
 
 // Obtener resumen de ventas de tienda
-router.get('/:id/resumen', async (req, res) => {
+router.get('/:id/resumen', checkTienda, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -371,7 +372,7 @@ router.get('/:id/resumen', async (req, res) => {
 });
 
 // Importación masiva de inventario a tienda (Sobrescribir y crear nuevos)
-router.post('/:id/importar', async (req, res) => {
+router.post('/:id/importar', checkTienda, async (req, res) => {
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
@@ -455,6 +456,9 @@ router.post('/:id/importar', async (req, res) => {
         }
 
         await connection.commit();
+        if (procesados === 0 && errores.length > 0) {
+            return res.status(400).json({ error: 'Fallo total al importar a tienda. Primer error: ' + errores[0], errores });
+        }
         res.json({
             message: `Proceso completado. ${procesados} productos vinculados a la tienda.`,
             procesados,

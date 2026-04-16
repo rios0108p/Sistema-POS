@@ -4,8 +4,8 @@ import { get, set, del } from 'idb-keyval';
 export const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
-            staleTime: 1000 * 60 * 60 * 24, // 24 Horas (Offline First: Preferimos cache viejo a nada)
-            gcTime: 1000 * 60 * 60 * 24 * 7, // 7 Días
+            staleTime: 1000 * 60, // 1 Minutos (Datos frescos para POS)
+            gcTime: 1000 * 60 * 60 * 24, // 24 Horas
             refetchOnWindowFocus: false,
             retry: 1,
             networkMode: 'always', // Critico para offline

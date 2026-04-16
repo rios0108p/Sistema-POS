@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
     Clock,
     Calendar as CalendarIcon,
@@ -21,7 +21,7 @@ import {
     Activity,
     History
 } from "lucide-react";
-import { movimientosAPI, dashboardAPI, configuracionAPI } from "../services/api";
+import { movimientosAPI, dashboardAPI, configuracionAPI, tiendasAPI } from "../services/api";
 import { CURRENCY_SYMBOL } from "../utils/currency";
 import { useAuth } from "../context/AuthContext";
 import Loading from "../Components/Common/Loading";
@@ -94,6 +94,16 @@ export default function MovementHistory() {
         m.ticket_numero?.toString().includes(searchTerm)
     );
 
+    const groupMovimientosByDate = (movs) => {
+        const groups = {};
+        movs.forEach(m => {
+            const dateStr = new Date(m.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            if (!groups[dateStr]) groups[dateStr] = [];
+            groups[dateStr].push(m);
+        });
+        return groups;
+    };
+
     const formatDateTime = (dateStr) => {
         const date = new Date(dateStr);
         return {
@@ -102,14 +112,26 @@ export default function MovementHistory() {
         };
     };
 
-    const handleReprint = (m) => {
+    const handleReprint = async (m) => {
         if (!m.id || m.tipo !== 'venta') {
             toast.error("Solo se pueden reimprimir ventas");
             return;
         }
 
+        // Fetch the store config to ensure we get the custom ticket_header and ticket_footer
+        let sucursalData = null;
+        const targetTiendaId = m.tienda_id || user?.tienda_id;
+        if (targetTiendaId) {
+            try {
+                sucursalData = await tiendasAPI.getById(targetTiendaId);
+            } catch (e) {
+                console.warn("No se pudo cargar la configuración de la sucursal para el ticket");
+            }
+        }
+
         printTicket({
             tienda: storeConfig,
+            sucursal: sucursalData,
             venta: {
                 id: m.referencia_id || m.id,
                 subtotal: m.monto,
@@ -161,7 +183,7 @@ export default function MovementHistory() {
                 <div className="card-standard p-4 mb-4 shadow-lg border-indigo-500/5 relative overflow-hidden transition-all duration-500">
                     <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full -mr-32 -mt-32 pointer-events-none"></div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end relative z-10">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-x-6 gap-y-4 items-end relative z-10">
                         <div className="md:col-span-3 space-y-3">
                             <label className="label-standard px-1">CONSULTAR FECHA</label>
                             <div className="relative group">
@@ -249,94 +271,108 @@ export default function MovementHistory() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    filteredMovimientos.map((m, idx) => {
-                                        const { date, time } = formatDateTime(m.fecha);
-                                        const isCancelled = m.estado === 'CANCELADA';
-                                        return (
-                                            <tr key={`${m.tipo}-${m.id}-${idx}`} className={`group transition-all hover:bg-slate-50/50 dark:hover:bg-slate-700/20 ${isCancelled ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
-                                                <td className="px-8 py-6 border-none">
-                                                    <div className="flex flex-col">
-                                                        <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 font-mono tracking-tighter">
-                                                            {m.ticket_numero ? `#${m.ticket_numero}` : `F-${m.id.toString().padStart(4, '0')}`}
-                                                        </span>
-                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1 opacity-60 flex items-center gap-1.5">
-                                                            <Clock size={10} /> {time}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-6 text-center border-none">
-                                                    <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border ${m.tipo === 'venta'
-                                                        ? 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-800/20'
-                                                        : 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/20'
-                                                        }`}>
-                                                        {m.tipo === 'venta' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                                                        {m.tipo}
-                                                    </div>
-                                                </td>
-                                                <div className="flex flex-col max-w-[300px]">
-                                                    <div className="flex items-center gap-2 mb-1.5">
-                                                        <span className={`text-sm font-black text-slate-700 dark:text-slate-200 uppercase tracking-tight group-hover:text-indigo-600 transition-colors truncate ${isCancelled ? 'line-through' : ''}`}>
-                                                            {m.descripcion}
-                                                        </span>
-                                                        {m.es_mayoreo === 1 && <span className="badge-standard bg-amber-50 dark:bg-amber-900/30 text-amber-600 border-none px-2 py-0.5 text-[8px]">MAYOREO</span>}
-                                                    </div>
-                                                    <div className="flex flex-col gap-0.5">
-                                                        {m.cliente_nombre && (
-                                                            <span className={`text-[11px] font-black uppercase tracking-tight ${m.es_mayoreo === 1 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                                                                {m.cliente_nombre}
-                                                            </span>
-                                                        )}
-                                                        <div className="flex items-center gap-2 opacity-50 mt-1">
-                                                            <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                                                <Store size={10} /> {m.tienda_nombre || 'PRINCIPAL'}
-                                                            </div>
-                                                            <span className="text-slate-300">•</span>
-                                                            <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                                                <CreditCard size={10} /> {m.metodo_pago || 'GENERAL'}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <td className="px-8 py-6 text-center border-none">
-                                                    <span className={`badge-standard border-none px-4 ${isCancelled
-                                                        ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/40'
-                                                        : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50'
-                                                        }`}>
-                                                        {isCancelled ? 'ANULADA' : 'EFECTIVA'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-8 py-6 border-none text-right">
-                                                    <div className="flex flex-col items-end">
-                                                        <span className={`text-xl font-black tracking-tighter ${m.tipo === 'venta' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                                            {m.tipo === 'venta' ? '+' : '-'}{currency}{Number(m.monto).toFixed(2)}
-                                                        </span>
-                                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest opacity-40">Monto Transado</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-6 border-none text-center">
-                                                    <div className="flex flex-col items-center gap-1">
-                                                        <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-indigo-500/20">
-                                                            <User size={16} />
-                                                        </div>
-                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{m.usuario || 'SISTEMA'}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-6 border-none text-right">
-                                                    <div className="flex items-center justify-end gap-2">
-                                                        {m.tipo === 'venta' && (
-                                                            <button
-                                                                onClick={() => handlePrintTicket(m)}
-                                                                className="p-3 rounded-xl hover:bg-indigo-50 text-indigo-600 transition-colors bg-slate-50 dark:bg-slate-800 dark:hover:bg-indigo-900/20"
-                                                                title="Reimprimir Ticket"
-                                                            >
-                                                                <Printer size={20} />
-                                                            </button>
-                                                        )}
+                                    Object.entries(groupMovimientosByDate(filteredMovimientos)).map(([dateKey, groupMovs]) => (
+                                        <React.Fragment key={dateKey}>
+                                            <tr className="bg-slate-100/50 dark:bg-slate-800/50">
+                                                <td colSpan="7" className="px-8 py-3 text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-[0.3em] border-y dark:border-slate-700/50">
+                                                    <div className="flex items-center gap-2">
+                                                        <CalendarIcon size={14} />
+                                                        {dateKey} — {groupMovs.length} Movimientos
                                                     </div>
                                                 </td>
                                             </tr>
-                                        );
-                                    })
+                                            {groupMovs.map((m, idx) => {
+                                                const { time } = formatDateTime(m.fecha);
+                                                const isCancelled = m.estado === 'CANCELADA';
+                                                return (
+                                                    <tr key={`${m.tipo}-${m.id}-${idx}`} className={`group transition-all hover:bg-slate-50/50 dark:hover:bg-slate-700/20 ${isCancelled ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                                                        <td className="px-8 py-6 border-none">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 font-mono tracking-tighter">
+                                                                    {m.ticket_numero ? `#${m.ticket_numero}` : `F-${m.id.toString().padStart(4, '0')}`}
+                                                                </span>
+                                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1 opacity-60 flex items-center gap-1.5">
+                                                                    <Clock size={10} /> {time}
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-6 text-center border-none">
+                                                            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border ${m.tipo === 'venta'
+                                                                ? 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-800/20'
+                                                                : 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/20'
+                                                                }`}>
+                                                                {m.tipo === 'venta' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                                                {m.tipo}
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-6 border-none">
+                                                            <div className="flex flex-col max-w-[300px]">
+                                                                <div className="flex items-center gap-2 mb-1.5">
+                                                                    <span className={`text-sm font-black text-slate-700 dark:text-slate-200 uppercase tracking-tight group-hover:text-indigo-600 transition-colors truncate ${isCancelled ? 'line-through' : ''}`}>
+                                                                        {m.descripcion}
+                                                                    </span>
+                                                                    {m.es_mayoreo === 1 && <span className="badge-standard bg-amber-50 dark:bg-amber-900/30 text-amber-600 border-none px-2 py-0.5 text-[8px]">MAYOREO</span>}
+                                                                </div>
+                                                                <div className="flex flex-col gap-0.5">
+                                                                    {m.cliente_nombre && (
+                                                                        <span className={`text-[11px] font-black uppercase tracking-tight ${m.es_mayoreo === 1 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                                                                            {m.cliente_nombre}
+                                                                        </span>
+                                                                    )}
+                                                                    <div className="flex items-center gap-2 opacity-50 mt-1">
+                                                                        <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                                                            <Store size={10} /> {m.tienda_nombre || 'PRINCIPAL'}
+                                                                        </div>
+                                                                        <span className="text-slate-300">•</span>
+                                                                        <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                                                            <CreditCard size={10} /> {m.metodo_pago || 'GENERAL'}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-6 text-center border-none">
+                                                            <span className={`badge-standard border-none px-4 ${isCancelled
+                                                                ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/40'
+                                                                : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50'
+                                                                }`}>
+                                                                {isCancelled ? 'ANULADA' : 'EFECTIVA'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-8 py-6 border-none text-right">
+                                                            <div className="flex flex-col items-end">
+                                                                <span className={`text-xl font-black tracking-tighter ${m.tipo === 'venta' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                                                    {m.tipo === 'venta' ? '+' : '-'}{currency}{Number(m.monto).toFixed(2)}
+                                                                </span>
+                                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest opacity-40">Monto Transado</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-6 border-none text-center">
+                                                            <div className="flex flex-col items-center gap-1">
+                                                                <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-indigo-500/20">
+                                                                    <User size={16} />
+                                                                </div>
+                                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{m.usuario || 'SISTEMA'}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-8 py-6 border-none text-right">
+                                                            <div className="flex items-center justify-end gap-2">
+                                                                {m.tipo === 'venta' && (
+                                                                    <button
+                                                                        onClick={() => handleReprint(m)}
+                                                                        className="p-3 rounded-xl hover:bg-indigo-50 text-indigo-600 transition-colors bg-slate-50 dark:bg-slate-800 dark:hover:bg-indigo-900/20"
+                                                                        title="Reimprimir Ticket"
+                                                                    >
+                                                                        <Printer size={20} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </React.Fragment>
+                                    ))
                                 )}
                             </tbody>
                         </table>

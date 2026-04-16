@@ -1,3 +1,4 @@
+// VERSIÓN DE EMERGENCIA: 2026-03-05_14:15 - REMOVIENDO SSL TOTALMENTE
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -25,8 +26,12 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     queueLimit: 0,
     multipleStatements: true,
-    // SSL requerido para TiDB Cloud en producción
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined
+    timezone: '-05:00', // Actualizado para Cancún (UTC-5)
+});
+
+// Forzar la zona horaria en cada nueva conexión del pool real
+pool.on('connection', function (connection) {
+    connection.query("SET time_zone = '-05:00';");
 });
 
 // Adapter simplificado para MySQL (Cumpliendo con la interfaz que el backend espera)

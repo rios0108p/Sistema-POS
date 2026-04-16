@@ -141,6 +141,7 @@ router.get('/', async (req, res) => {
                 ${usuario_id ? 'AND a.usuario_id = ?' : ''}
             ) as movimientos
             ORDER BY fecha DESC
+            LIMIT 200
         `;
 
         const [rows] = await db.query(query, [...paramsV, ...paramsC, ...paramsA]);

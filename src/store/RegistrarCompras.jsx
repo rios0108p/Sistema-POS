@@ -6,6 +6,7 @@ import { CURRENCY_SYMBOL } from "../utils/currency";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
 import { FileText, Table as TableIcon, ShoppingBag, Plus, Search, RefreshCw, Calendar, Store, User, ChevronDown, Package, ArrowRight, DollarSign, TrendingUp, Filter } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import useOfflineOperation from "../hooks/useOfflineOperation";
 
 const RegistrarCompras = () => {
   const { user, turnoActivo } = useAuth();
@@ -20,10 +21,19 @@ const RegistrarCompras = () => {
   const [productoSeleccionado, setProductoSeleccionado] = useState(null);
   const [variacionSeleccionada, setVariacionSeleccionada] = useState(null);
   const [cargando, setCargando] = useState(false);
+
+  const { execute: executePurchase } = useOfflineOperation('compras');
+
+  // Fecha local correcta (no UTC) para Cancún GMT-5/GMT-6
+  const getLocalDate = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
   const [form, setForm] = useState({
     cantidad: "",
     precio_compra: "",
-    fecha: new Date().toISOString().split('T')[0],
+    fecha: getLocalDate(),
     proveedor_id: "",
     tienda_id: "",
   });
@@ -183,7 +193,7 @@ const RegistrarCompras = () => {
         }]
       };
 
-      await comprasAPI.create(data);
+      await executePurchase('insert', data);
       toast.success("Compra registrada correctamente");
 
       setProductoSeleccionado(null);
@@ -206,10 +216,19 @@ const RegistrarCompras = () => {
     }
   };
 
-  const productosFiltrados = productos.filter(p =>
-    p.nombre.toLowerCase().includes(busquedaNombre.toLowerCase()) ||
-    (p.codigo_barras && p.codigo_barras.includes(busquedaNombre))
-  ).slice(0, 10);
+  const productosFiltrados = productos
+    .filter(p =>
+      p.nombre.toLowerCase().includes(busquedaNombre.toLowerCase()) ||
+      (p.codigo_barras && p.codigo_barras.includes(busquedaNombre))
+    )
+    .sort((a, b) => {
+      const aHasStock = a.cantidad > 0;
+      const bHasStock = b.cantidad > 0;
+      if (aHasStock && !bHasStock) return -1;
+      if (!aHasStock && bHasStock) return 1;
+      return a.nombre.localeCompare(b.nombre);
+    })
+    .slice(0, 10);
 
   const safeCompras = Array.isArray(compras) ? compras : [];
   const totalUnidades = safeCompras.reduce((acc, c) => acc + (Number(c.cantidad) || 0), 0);
@@ -232,12 +251,14 @@ const RegistrarCompras = () => {
         </div>
 
         {/* Purchase Registration Form */}
-        <div className="card-standard p-6 mb-4 shadow-xl relative overflow-hidden transition-all duration-500 hover:shadow-indigo-500/10">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full -mr-32 -mt-32 pointer-events-none"></div>
+        <div className={`card-standard p-6 mb-4 shadow-xl relative transition-all duration-500 hover:shadow-indigo-500/10 !overflow-visible ${mostrarLista && busquedaNombre ? 'z-[1001]' : 'z-10'}`}>
+          <div className="absolute inset-0 overflow-hidden rounded-[2rem] pointer-events-none">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full -mr-32 -mt-32"></div>
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6 items-end relative z-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-x-6 gap-y-4 items-end relative z-50">
             {/* Product Selector */}
-            <div className="md:col-span-2 lg:col-span-4 space-y-2">
+            <div className="md:col-span-2 lg:col-span-3 xl:col-span-4 space-y-2">
               <div className="flex justify-between items-center px-1">
                 <label className="label-standard">SELECCIONAR PRODUCTO *</label>
                 <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-2 py-0.5 rounded border dark:border-slate-800 text-[10px] font-black text-slate-400">
@@ -254,23 +275,43 @@ const RegistrarCompras = () => {
                   placeholder="LOCALIZAR O ESCANEAR..."
                 />
                 {mostrarLista && busquedaNombre && (
-                  <ul className="absolute z-50 bg-white dark:bg-slate-800 border dark:border-slate-700/80 rounded-2xl w-full mt-3 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.3)] max-h-72 overflow-y-auto ring-1 ring-black/5 animate-in fade-in zoom-in duration-300">
+                  <ul className="absolute z-[1002] bg-white dark:bg-slate-800 border-0 rounded-[2rem] w-full mt-2 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.4)] max-h-[260px] overflow-y-auto ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 duration-300 custom-scrollbar overflow-x-hidden border border-slate-100 dark:border-slate-700/50">
                     {productosFiltrados.length > 0 ? (
-                      productosFiltrados.map(p => (
-                        <li
-                          key={p.id}
-                          onClick={() => handleSeleccionarProducto(p)}
-                          className="p-4 hover:bg-indigo-50 dark:hover:bg-indigo-900/10 cursor-pointer flex justify-between items-center group/item border-b dark:border-slate-700/50 last:border-0"
-                        >
-                          <div className="flex items-center gap-3">
-                            <Package size={16} className="text-slate-300 group-hover/item:text-indigo-500" />
-                            <span className="font-bold text-slate-700 dark:text-slate-200 group-hover/item:text-indigo-600 dark:group-hover/item:text-indigo-400 transition-colors uppercase text-xs tracking-tight">{p.nombre}</span>
-                          </div>
-                          {p.variaciones?.length > 0 && <span className="badge-standard bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 border-none py-1">VARIACIONES</span>}
-                        </li>
-                      ))
+                      <div className="p-1.5 space-y-0.5">
+                        {productosFiltrados.map(p => (
+                          <li
+                            key={p.id}
+                            onClick={() => handleSeleccionarProducto(p)}
+                            className="p-3.5 rounded-2xl hover:bg-slate-50 dark:hover:bg-indigo-900/10 group cursor-pointer flex justify-between items-center transition-all duration-200 border border-transparent hover:border-slate-100 dark:hover:border-indigo-500/20"
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-900/50 flex items-center justify-center group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/50 transition-colors">
+                                <Package size={18} className="text-slate-400 group-hover:text-indigo-600 transition-colors" />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="font-black text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors uppercase text-xs tracking-tight leading-tight">{p.nombre}</span>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{p.codigo_barras || 'SIN CÓDIGO'}</span>
+                                  <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md ${p.cantidad > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>EXIST: {p.cantidad}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end">
+                              <span className="text-xs font-black text-slate-800 dark:text-slate-200">{currency}{Number(p.precio_venta || 0).toFixed(2)}</span>
+                              {p.variaciones?.length > 0 && (
+                                <span className="text-[7px] font-black bg-indigo-50 dark:bg-indigo-900/30 text-indigo-500 px-1.5 py-0.5 rounded-full mt-1 border border-indigo-100">VARIACIONES</span>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </div>
                     ) : (
-                      <div className="p-8 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest opacity-50">Sin resultados</div>
+                      <div className="p-10 text-center">
+                        <div className="w-12 h-12 bg-slate-50 dark:bg-slate-900/50 rounded-full flex items-center justify-center mx-auto mb-3 opacity-40">
+                          <Search size={22} className="text-slate-400" />
+                        </div>
+                        <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest opacity-50">Sin coincidencias</p>
+                      </div>
                     )}
                   </ul>
                 )}

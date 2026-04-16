@@ -16,6 +16,39 @@ router.get('/', async (req, res) => {
             }
         }
 
+        // Migración para campos de crédito
+        try {
+            await db.query('SELECT credito_habilitado FROM clientes LIMIT 1');
+        } catch (e) {
+            if (e.code === 'ER_BAD_FIELD_ERROR') {
+                await db.query('ALTER TABLE clientes ADD COLUMN credito_habilitado TINYINT(1) DEFAULT 0 AFTER codigo_barras');
+                await db.query('ALTER TABLE clientes ADD COLUMN limite_credito DECIMAL(10, 2) DEFAULT 0 AFTER credito_habilitado');
+                await db.query('ALTER TABLE clientes ADD COLUMN saldo_deudor DECIMAL(10, 2) DEFAULT 0 AFTER limite_credito');
+                console.log('✅ Columnas de crédito añadidas a clientes.');
+            }
+        }
+
+        // Migración para tabla de abonos
+        try {
+            await db.query('SELECT id FROM clientes_abonos LIMIT 1');
+        } catch (e) {
+            if (e.code === 'ER_NO_SUCH_TABLE') {
+                await db.query(`
+                    CREATE TABLE IF NOT EXISTS clientes_abonos (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        cliente_id INT NOT NULL,
+                        monto DECIMAL(10, 2) NOT NULL,
+                        metodo_pago VARCHAR(50) NOT NULL,
+                        nota TEXT,
+                        usuario_id INT,
+                        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB
+                `);
+                console.log('✅ Tabla "clientes_abonos" creada.');
+            }
+        }
+
         const [rows] = await db.query('SELECT * FROM clientes ORDER BY nombre ASC');
 
         // Auto-generar códigos faltantes para clientes antiguos
@@ -54,31 +87,95 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-// Obtener historial de cliente (Ventas y Pedidos)
+// Obtener historial de cliente (Ventas, Pedidos y Abonos)
 router.get('/:id/historial', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Movimientos (Ventas donde participó el cliente)
+        // 1. Movimientos (Ventas donde participó el cliente) con detalle de métodos de pago
         const [ventas] = await db.query(`
-            SELECT v.*, ti.nombre as tienda_nombre
+            SELECT v.*, ti.nombre as tienda_nombre,
+                   GROUP_CONCAT(CONCAT(vp.metodo, CASE WHEN vp.referencia IS NOT NULL THEN CONCAT(' (', vp.referencia, ')') ELSE '' END) SEPARATOR ' + ') as metodo_detalle
             FROM ventas v
             LEFT JOIN tiendas ti ON v.tienda_id = ti.id
+            LEFT JOIN ventas_pagos vp ON v.id = vp.venta_id
             WHERE v.cliente_id = ?
+            GROUP BY v.id
             ORDER BY v.fecha DESC
         `, [id]);
 
-        // Detalles de esas ventas para un desglose más rico si se necesita
-        const [pedidos] = await db.query(`
-            SELECT * FROM pedidos 
+        // 2. Abonos registrados
+        const [abonos] = await db.query(`
+            SELECT * FROM clientes_abonos 
             WHERE cliente_id = ? 
-            ORDER BY created_at DESC
-        `, [id] || []);
+            ORDER BY fecha DESC
+        `, [id]);
 
-        res.json({ ventas, pedidos });
+        // 3. Pedidos (con manejo de error por si la tabla no existe)
+        let pedidos = [];
+        try {
+            const [pedidosRows] = await db.query(`
+                SELECT * FROM pedidos 
+                WHERE cliente_id = ? 
+                ORDER BY created_at DESC
+            `, [id]);
+            pedidos = pedidosRows;
+        } catch (e) {
+            console.warn('Tabla pedidos no encontrada en historial');
+        }
+
+        res.json({ ventas, abonos, pedidos });
     } catch (error) {
         console.error('Error al obtener historial:', error);
         res.status(500).json({ error: `Error al obtener historial: ${error.message}` });
+    }
+});
+
+// Obtener abonos de un cliente
+router.get('/:id/abonos', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await db.query('SELECT * FROM clientes_abonos WHERE cliente_id = ? ORDER BY fecha DESC', [id]);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error al obtener abonos:', error);
+        res.status(500).json({ error: 'Error al obtener abonos' });
+    }
+});
+
+// Registrar abono a un cliente
+router.post('/:id/abonos', async (req, res) => {
+    const conn = await db.getConnection();
+    try {
+        const { id } = req.params;
+        const { monto, metodo_pago, nota, usuario_id } = req.body;
+
+        if (!monto || monto <= 0) {
+            return res.status(400).json({ error: 'El monto del abono debe ser mayor a 0' });
+        }
+
+        await conn.beginTransaction();
+
+        // 1. Registrar el abono
+        await conn.query(
+            'INSERT INTO clientes_abonos (cliente_id, monto, metodo_pago, nota, usuario_id) VALUES (?, ?, ?, ?, ?)',
+            [id, monto, metodo_pago, nota || null, usuario_id || null]
+        );
+
+        // 2. Actualizar el saldo deudor del cliente
+        await conn.query(
+            'UPDATE clientes SET saldo_deudor = saldo_deudor - ? WHERE id = ?',
+            [monto, id]
+        );
+
+        await conn.commit();
+        res.json({ message: 'Abono registrado exitosamente' });
+    } catch (error) {
+        await conn.rollback();
+        console.error('Error al registrar abono:', error);
+        res.status(500).json({ error: 'Error al registrar abono' });
+    } finally {
+        conn.release();
     }
 });
 
@@ -178,7 +275,7 @@ router.delete('/:id/precios-especiales/:productoId', async (req, res) => {
 // Crear nuevo cliente
 router.post('/', async (req, res) => {
     try {
-        let { nombre, email, telefono, direccion, nit_dpi, codigo_barras } = req.body;
+        let { nombre, email, telefono, direccion, nit_dpi, codigo_barras, credito_habilitado, limite_credito } = req.body;
 
         if (!nombre) {
             return res.status(400).json({ error: 'El nombre es obligatorio' });
@@ -191,8 +288,8 @@ router.post('/', async (req, res) => {
         }
 
         const [result] = await db.query(
-            'INSERT INTO clientes (nombre, email, telefono, direccion, nit_dpi, codigo_barras) VALUES (?, ?, ?, ?, ?, ?)',
-            [nombre, email || null, telefono || null, direccion || null, nit_dpi || null, codigo_barras]
+            'INSERT INTO clientes (nombre, email, telefono, direccion, nit_dpi, codigo_barras, credito_habilitado, limite_credito, saldo_deudor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
+            [nombre, email || null, telefono || null, direccion || null, nit_dpi || null, codigo_barras, credito_habilitado ? 1 : 0, limite_credito || 0]
         );
 
         res.status(201).json({
@@ -210,15 +307,15 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, email, telefono, direccion, nit_dpi, codigo_barras } = req.body;
+        const { nombre, email, telefono, direccion, nit_dpi, codigo_barras, credito_habilitado, limite_credito } = req.body;
 
         if (!nombre) {
             return res.status(400).json({ error: 'El nombre es obligatorio' });
         }
 
         await db.query(
-            'UPDATE clientes SET nombre = ?, email = ?, telefono = ?, direccion = ?, nit_dpi = ?, codigo_barras = ? WHERE id = ?',
-            [nombre, email || null, telefono || null, direccion || null, nit_dpi || null, codigo_barras || null, id]
+            'UPDATE clientes SET nombre = ?, email = ?, telefono = ?, direccion = ?, nit_dpi = ?, codigo_barras = ?, credito_habilitado = ?, limite_credito = ? WHERE id = ?',
+            [nombre, email || null, telefono || null, direccion || null, nit_dpi || null, codigo_barras || null, credito_habilitado ? 1 : 0, limite_credito || 0, id]
         );
 
         res.json({

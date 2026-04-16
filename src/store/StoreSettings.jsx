@@ -1,16 +1,17 @@
 import { useState, useEffect } from "react";
-import { configuracionAPI, getImageUrl } from "../services/api";
+import { configuracionAPI, tiendasAPI, getImageUrl } from "../services/api";
 import { toast } from "react-hot-toast";
 import {
     Store, ImagePlus, CheckCircle, Settings, MapPin,
     Phone, CreditCard, DollarSign, Printer, ChevronRight,
-    Info, ShieldCheck, RefreshCw
+    Info, ShieldCheck, RefreshCw, Save
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function StoreSettings() {
     const { user, fetchStoreConfig } = useAuth();
     const [loading, setLoading] = useState(false);
+    const [savingTienda, setSavingTienda] = useState(false);
     const [config, setConfig] = useState({
         nombre_tienda: "",
         logo: "",
@@ -36,9 +37,85 @@ export default function StoreSettings() {
     const [previewUrl, setPreviewUrl] = useState(null);
     const [previewBgUrl, setPreviewBgUrl] = useState(null);
 
+    // Estado para Personalización por Tienda
+    const [tiendas, setTiendas] = useState([]);
+    const [selectedTiendaId, setSelectedTiendaId] = useState("");
+    const [tiendaConfig, setTiendaConfig] = useState({
+        nombre: "",
+        rfc: "",
+        direccion: "",
+        telefono: "",
+        ticket_header: "",
+        ticket_footer: ""
+    });
+
+    const [availablePrinters, setAvailablePrinters] = useState([]);
+    const [selectedPrinter, setSelectedPrinter] = useState(localStorage.getItem('pos_printer_name') || "");
+
     useEffect(() => {
         fetchConfig();
+        fetchTiendas();
+        if (window.electronAPI?.getPrinters) {
+            window.electronAPI.getPrinters().then(printers => {
+                setAvailablePrinters(printers || []);
+            });
+        }
     }, []);
+
+    const fetchTiendas = async () => {
+        try {
+            const data = await tiendasAPI.getAll();
+            setTiendas(data || []);
+        } catch (error) {
+            console.error("Error al obtener tiendas:", error);
+        }
+    };
+
+    useEffect(() => {
+        if (selectedTiendaId) {
+            const tienda = tiendas.find(t => t.id === Number(selectedTiendaId) || t.id === selectedTiendaId);
+            if (tienda) {
+                setTiendaConfig({
+                    nombre: tienda.nombre || "",
+                    rfc: tienda.rfc || "",
+                    direccion: tienda.direccion || "",
+                    telefono: tienda.telefono || "",
+                    ticket_header: tienda.ticket_header || "",
+                    ticket_footer: tienda.ticket_footer || ""
+                });
+            }
+        }
+    }, [selectedTiendaId, tiendas]);
+
+    const handleSaveTiendaConfig = async () => {
+        if (!selectedTiendaId) return;
+        setSavingTienda(true);
+        try {
+            const tienda = tiendas.find(t => t.id === Number(selectedTiendaId) || t.id === selectedTiendaId);
+            if (!tienda) throw new Error("Tienda no encontrada");
+
+            // Preparar payload con todos los campos obligatorios de PUT /:id de tiendas
+            const updatePayload = {
+                nombre: tiendaConfig.nombre,
+                tipo: tienda.tipo,
+                direccion: tiendaConfig.direccion,
+                telefono: tiendaConfig.telefono,
+                rfc: tiendaConfig.rfc,
+                monto_base: tienda.monto_base,
+                activa: tienda.activa,
+                ticket_header: tiendaConfig.ticket_header,
+                ticket_footer: tiendaConfig.ticket_footer
+            };
+
+            await tiendasAPI.update(tienda.id, updatePayload);
+            toast.success("Ticket personalizado de tienda actualizado");
+            await fetchTiendas(); // Recargar las tiendas
+        } catch (error) {
+            toast.error(error.message || "Error al actualizar configuración de tienda");
+        } finally {
+            setSavingTienda(false);
+        }
+    };
 
     const fetchConfig = async () => {
         try {
@@ -208,52 +285,10 @@ export default function StoreSettings() {
                         <div className="card-standard p-10">
                             <h2 className="text-xl font-black text-slate-800 dark:text-white uppercase tracking-tight mb-8 flex items-center gap-3">
                                 <Info size={24} className="text-indigo-500" />
-                                Información de Operaciones
+                                Configuración General del Sistema
                             </h2>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                                <div className="space-y-2">
-                                    <label className="label-standard px-1">Nombre Comercial</label>
-                                    <div className="relative group">
-                                        <Store className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={20} />
-                                        <input
-                                            type="text"
-                                            className="input-standard pl-12 h-[52px] font-bold"
-                                            value={config.nombre_tienda}
-                                            onChange={e => setConfig({ ...config, nombre_tienda: e.target.value })}
-                                            placeholder="Nombre de la empresa..."
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="label-standard px-1">Identificación Fiscal (NIT/DPI)</label>
-                                    <div className="relative group">
-                                        <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={20} />
-                                        <input
-                                            type="text"
-                                            className="input-standard pl-12 h-[52px] font-bold"
-                                            value={config.nit}
-                                            onChange={e => setConfig({ ...config, nit: e.target.value })}
-                                            placeholder="Tax ID..."
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="label-standard px-1">Teléfono de Contacto</label>
-                                    <div className="relative group">
-                                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={20} />
-                                        <input
-                                            type="text"
-                                            className="input-standard pl-12 h-[52px] font-bold"
-                                            value={config.telefono}
-                                            onChange={e => setConfig({ ...config, telefono: e.target.value })}
-                                            placeholder="+502 ..."
-                                        />
-                                    </div>
-                                </div>
-
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <div className="space-y-2">
                                     <label className="label-standard px-1">Divisa Nacional</label>
                                     <div className="relative group">
@@ -268,24 +303,8 @@ export default function StoreSettings() {
                                     </div>
                                 </div>
 
-                                <div className="md:col-span-2 space-y-2">
-                                    <label className="label-standard px-1">Dirección Física</label>
-                                    <div className="relative group">
-                                        <MapPin className="absolute left-4 top-4 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={20} />
-                                        <textarea
-                                            rows="2"
-                                            className="input-standard pl-12 py-4 h-24 font-bold resize-none"
-                                            value={config.direccion}
-                                            onChange={e => setConfig({ ...config, direccion: e.target.value })}
-                                            placeholder="Dirección física completa..."
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                                 <div className="space-y-2">
-                                    <label className="label-standard px-1">Correo Electrónico</label>
+                                    <label className="label-standard px-1">Correo Electrónico (Global)</label>
                                     <div className="relative group">
                                         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors"><Info size={20} /></div>
                                         <input
@@ -299,7 +318,7 @@ export default function StoreSettings() {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className="label-standard px-1">Sitio Web</label>
+                                    <label className="label-standard px-1">Sitio Web (Global)</label>
                                     <div className="relative group">
                                         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors"><Store size={20} /></div>
                                         <input
@@ -312,20 +331,6 @@ export default function StoreSettings() {
                                     </div>
                                 </div>
                             </div>
-
-                            <div className="space-y-2">
-                                <label className="label-standard px-1">Mensaje Pie de Ticket</label>
-                                <div className="relative group">
-                                    <div className="absolute left-4 top-4 text-slate-300 group-focus-within:text-indigo-500 transition-colors"><Printer size={20} /></div>
-                                    <textarea
-                                        rows="2"
-                                        className="input-standard pl-12 py-4 h-24 font-bold resize-none"
-                                        value={config.mensaje_ticket || ""}
-                                        onChange={e => setConfig({ ...config, mensaje_ticket: e.target.value })}
-                                        placeholder="Gracias por su compra..."
-                                    />
-                                </div>
-                            </div>
                         </div>
 
                         <div className="card-standard p-10">
@@ -334,9 +339,9 @@ export default function StoreSettings() {
                                 Configuración de Ticket POS
                             </h2>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end mb-10">
                                 <div className="space-y-4">
-                                    <label className="label-standard px-1 block">Ancho Impresión Térmica</label>
+                                    <label className="label-standard px-1 block">Ancho Impresión Térmica Global</label>
                                     <div className="flex gap-4">
                                         {['58mm', '80mm'].map(size => (
                                             <button
@@ -353,6 +358,142 @@ export default function StoreSettings() {
                                         ))}
                                     </div>
                                 </div>
+
+                                {window.electronAPI && (
+                                    <div className="space-y-4">
+                                        <label className="label-standard px-1 block">Impresora del Sistema (Escritorio)</label>
+                                        <select
+                                            className="input-standard h-[52px] font-bold"
+                                            value={selectedPrinter}
+                                            onChange={(e) => {
+                                                setSelectedPrinter(e.target.value);
+                                                localStorage.setItem('pos_printer_name', e.target.value);
+                                                toast.success(`Impresora fijada: ${e.target.value || 'Predeterminada'}`);
+                                            }}
+                                        >
+                                            <option value="">-- Impresora Predeterminada de Escritorio --</option>
+                                            {availablePrinters.map(printer => (
+                                                <option key={printer.name} value={printer.name}>
+                                                    {printer.name} {printer.isDefault ? '(Predeterminada)' : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="text-[10px] text-indigo-500 font-bold uppercase">
+                                            Selecciona la impresora térmica conectada a esta computadora.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+
+                            <hr className="border-slate-100 dark:border-slate-800 my-8" />
+
+                            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-widest mb-6 flex items-center gap-2">
+                                <Store size={18} className="text-fuchsia-500" /> Personalización por Sucursal
+                            </h3>
+
+                            <div className="space-y-6">
+                                <div className="space-y-2">
+                                    <label className="label-standard px-1">Seleccionar Tienda / Sucursal</label>
+                                    <select
+                                        className="input-standard h-[52px] font-bold"
+                                        value={selectedTiendaId}
+                                        onChange={(e) => setSelectedTiendaId(e.target.value)}
+                                    >
+                                        <option value="">-- Elige una sucursal para personalizar su ticket --</option>
+                                        {tiendas.map(t => (
+                                            <option key={t.id} value={t.id}>{t.nombre}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {selectedTiendaId && (
+                                    <div className="p-6 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-6 animate-fade-in">
+                                        <div className="bg-indigo-50 dark:bg-indigo-500/10 p-4 rounded-xl border border-indigo-100 dark:border-indigo-500/20 mb-4">
+                                            <p className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">
+                                                <Info size={14} className="inline mr-1" />
+                                                Estas líneas se imprimirán en la parte superior e inferior del ticket solo en esta sucursal, sobrescribiendo la configuración global si se llenan.
+                                            </p>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div className="space-y-2">
+                                                <label className="label-standard px-1">Nombre de esta Sucursal</label>
+                                                <input
+                                                    type="text"
+                                                    className="input-standard h-[52px] font-bold"
+                                                    value={tiendaConfig.nombre}
+                                                    onChange={e => setTiendaConfig({ ...tiendaConfig, nombre: e.target.value })}
+                                                    placeholder="Nombre comercial de esta sucursal..."
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="label-standard px-1">RFC / Identificación Fiscal</label>
+                                                <input
+                                                    type="text"
+                                                    className="input-standard h-[52px] font-bold"
+                                                    value={tiendaConfig.rfc}
+                                                    onChange={e => setTiendaConfig({ ...tiendaConfig, rfc: e.target.value })}
+                                                    placeholder="RFC específico para esta sucursal..."
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="label-standard px-1">Teléfono</label>
+                                                <input
+                                                    type="text"
+                                                    className="input-standard h-[52px] font-bold"
+                                                    value={tiendaConfig.telefono}
+                                                    onChange={e => setTiendaConfig({ ...tiendaConfig, telefono: e.target.value })}
+                                                    placeholder="Teléfono de esta sucursal..."
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="label-standard px-1">Dirección Física</label>
+                                                <input
+                                                    type="text"
+                                                    className="input-standard h-[52px] font-bold"
+                                                    value={tiendaConfig.direccion}
+                                                    onChange={e => setTiendaConfig({ ...tiendaConfig, direccion: e.target.value })}
+                                                    placeholder="Dirección de esta sucursal..."
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className="label-standard px-1">Líneas Superiores Extra (Encabezado)</label>
+                                            <textarea
+                                                rows="2"
+                                                className="input-standard py-4 font-mono text-sm resize-none"
+                                                value={tiendaConfig.ticket_header}
+                                                onChange={e => setTiendaConfig({ ...tiendaConfig, ticket_header: e.target.value })}
+                                                placeholder="Mensajes adicionales superiores..."
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="label-standard px-1">Líneas Inferiores Extra (Pie de Página)</label>
+                                            <textarea
+                                                rows="2"
+                                                className="input-standard py-4 font-mono text-sm resize-none"
+                                                value={tiendaConfig.ticket_footer}
+                                                onChange={e => setTiendaConfig({ ...tiendaConfig, ticket_footer: e.target.value })}
+                                                placeholder="Mensajes adicionales inferiores..."
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            disabled={savingTienda}
+                                            onClick={handleSaveTiendaConfig}
+                                            className="btn-primary w-full h-[52px] bg-slate-800 hover:bg-slate-900 border-none text-xs tracking-[0.2em]"
+                                        >
+                                            {savingTienda ? (
+                                                <RefreshCw size={18} className="animate-spin" />
+                                            ) : (
+                                                <>
+                                                    <Save size={18} />
+                                                    GUARDAR TICKET PARA ESTA SUCURSAL
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
 

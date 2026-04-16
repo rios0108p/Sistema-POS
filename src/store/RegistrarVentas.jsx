@@ -8,22 +8,39 @@ import {
   Trash, Trash2, ShoppingCart, User, Plus, Minus, History, Store,
   FileText, Pause, Play, AlertCircle, Save, Search, Package, Tag,
   Clock, DollarSign, X, Ban, CreditCard, RefreshCcw, TrendingUp, TrendingDown,
-  Printer, Zap, XCircle
+  Printer, Zap, XCircle, Activity
 } from "lucide-react";
 import PaymentModal from "./components/PaymentModal";
 import QuickClientModal from "./components/QuickClientModal";
 import PinValidationModal from "./components/PinValidationModal";
-import { printTicket } from "../utils/printUtils";
+import PriceVerifierModal from "./components/PriceVerifierModal";
+import { printTicket, printCorteTicket } from "../utils/printUtils";
 import { configuracionAPI, dashboardAPI } from "../services/api";
-import { useOfflineSync } from "../hooks/useOfflineSync"; // New Import
+import { motion, AnimatePresence } from "framer-motion";
+import PromocionesModal from "./components/PromocionesModal";
+import CashMovementModal from "./components/CashMovementModal";
+import PendingTicketsModal from "./components/PendingTicketsModal";
+import useOfflineOperation from "../hooks/useOfflineOperation";
+import {
+  getEffectivePrice,
+  getCartTotals,
+  parseSearchQuantity as parseQtyFromSearch
+} from "../utils/cartUtils";
+import hardwareService from "../services/hardwareService";
+import { normalizeProduct } from "../utils/productUtils";
+import { formatDate, formatDateTime } from "../utils/dateUtils";
+import { formatCurrency, cleanCurrency } from "../utils/formatUtils";
+import { List } from 'react-window';
+
 
 const RegistrarVentas = () => {
-  // --- Auth & Router ---
-  const { user, turnoActivo, updateTurnoActivo, logout, storeConfig } = useAuth();
+  // --- ESSENTIAL HOOKS ONLY (TOP LEVEL) ---
+  const { user, turnoActivo, updateTurnoActivo, logout, storeConfig, hasPermission } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { isOnline, saveToQueue, pendingSales, isSyncing } = useOfflineSync();
-
+  const searchInputRef = useRef(null);
+  // MOCKED OFFLINE SYNC REPLACED BY REAL OFFLOINE CAPABILITIES
+  const { execute: executeSales, isOnline, isSyncing, pendingSales } = useOfflineOperation('sales');
   // --- Constants ---
   const currency = storeConfig?.moneda || '$';
 
@@ -41,6 +58,7 @@ const RegistrarVentas = () => {
   // --- POS State ---
   const [cart, setCart] = useState([]);
   const [busqueda, setBusqueda] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0); // Track selected item in list
 
   // Selection for Variations
   const [prodSeleccionado, setProdSeleccionado] = useState(null); // Modal/Area para seleccionar variacion
@@ -48,10 +66,16 @@ const RegistrarVentas = () => {
   // Sale details
   const [clienteId, setClienteId] = useState("");
   const [descuentoGlobal, setDescuentoGlobal] = useState(0);
+  const [localDiscount, setLocalDiscount] = useState("");
+  const [showDiscountPinModal, setShowDiscountPinModal] = useState(false);
+  const [pendingDiscount, setPendingDiscount] = useState("");
   const [notas, setNotas] = useState("");
 
   // Suspended Carts
   const [ventasSuspendidas, setVentasSuspendidas] = useState([]);
+
+  // Transition / Closing state to prevent auto-reopen after manual close
+  const [isClosingProcess, setIsClosingProcess] = useState(false);
 
   // --- Turno/Shift State ---
   const [turnoDetalleRaw, setTurnoDetalleRaw] = useState(null);
@@ -63,6 +87,7 @@ const RegistrarVentas = () => {
   const [showQuickClient, setShowQuickClient] = useState(false);
   const [nextTicketNo, setNextTicketNo] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [topProductos, setTopProductos] = useState([]);
   const [tiendas, setTiendas] = useState([]);
   const [selectedTiendaId, setSelectedTiendaId] = useState(user?.tienda_id || "");
@@ -76,9 +101,14 @@ const RegistrarVentas = () => {
   // --- Security PIN ---
   const [showPinModal, setShowPinModal] = useState(false);
   const [pendingAction, setPendingAction] = useState(null); // { type: 'CANCEL_SALE', id: 123 }
+  const [showPriceVerifier, setShowPriceVerifier] = useState(false);
+  const [showPromociones, setShowPromociones] = useState(false);
+  const [showCashMovement, setShowCashMovement] = useState({ isOpen: false, type: 'SALIDA' });
+  const [showPendingTickets, setShowPendingTickets] = useState(false);
+  const [pendingMontoFinal, setPendingMontoFinal] = useState(null);
+  const [pendingTicketsCount, setPendingTicketsCount] = useState(0);
 
-  // --- Refs ---
-  const searchInputRef = useRef(null);
+
 
   // --- Initialization ---
   useEffect(() => {
@@ -87,25 +117,72 @@ const RegistrarVentas = () => {
     const suspended = localStorage.getItem('ventas_suspendidas');
     if (suspended) setVentasSuspendidas(JSON.parse(suspended));
 
-    // Handle automated corte request from sidebar
-    if (searchParams.get('openCorte') === 'true') {
-      setShowTurnoModal(true);
-      loadTurnoActivo();
-      // Limpiar el parámetro para permitir re-activación desde el sidebar
-      setSearchParams({}, { replace: true });
-    }
-
     // Load top selling products for quick access
     dashboardAPI.getStats('month', selectedTiendaId)
       .then(data => {
         if (data.topProductos) setTopProductos(data.topProductos);
       })
       .catch(err => console.error("Error loading top products:", err));
-  }, [searchParams, selectedTiendaId]);
+
+  }, [selectedTiendaId]);
+
+  // Sync local discount input with global state
+  useEffect(() => {
+    setLocalDiscount(descuentoGlobal || "");
+  }, [descuentoGlobal]);
+
+  const handleApplyDiscount = () => {
+    const numericVal = parseFloat(localDiscount) || 0;
+    if (numericVal === parseFloat(descuentoGlobal || 0)) return;
+
+    if (user?.rol === 'admin') {
+      setDescuentoGlobal(numericVal);
+    } else {
+      setPendingDiscount(numericVal);
+      setShowDiscountPinModal(true);
+    }
+  };
+
+  // Handle automated corte request from sidebar
+  // Fix #46: Don't call searchParams.get() in dependency array — use searchParams object
+  useEffect(() => {
+    const openCorte = searchParams.get('openCorte');
+    if (openCorte === 'true') {
+      setIsClosingProcess(true);
+      setShowTurnoModal(true);
+      loadTurnoActivo();
+      // Limpiar el parámetro para permitir re-activación desde el sidebar
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams]);
+
+  // Auto-open shift for VENDEDOR if none active
+  useEffect(() => {
+    // Solo auto-abrir para vendedores. El admin debe hacerlo manual tras elegir tienda.
+    // AGREGADO: No abrir si estamos en proceso de cierre (Entrega de Turno)
+    if (user?.rol === 'vendedor' && !turnoActivo && !isClosingProcess && (selectedTiendaId || user?.tienda_id)) {
+      handleAutoOpenShift();
+    }
+  }, [user, turnoActivo, selectedTiendaId, isClosingProcess]);
+
+  // UX-002: Confirmación al intentar salir con productos en el carrito
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (cart.length > 0 && !loading) {
+        const msg = "Tienes productos en el carrito. ¿Estás seguro de que quieres salir?";
+        e.preventDefault();
+        e.returnValue = msg;
+        return msg;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [cart, loading]);
+
 
   const loadTurnoActivo = async () => {
     try {
-      const turno = await turnosAPI.getActivo(user?.id);
+      const turno = await turnosAPI.getActivo(user?.id, selectedTiendaId);
       updateTurnoActivo(turno);
       if (turno) {
         // Fetch detailed breakdown for the active shift
@@ -113,86 +190,37 @@ const RegistrarVentas = () => {
         setTurnoDetalleRaw(detail);
       } else {
         setTurnoDetalleRaw(null);
-        // ADMIN AUTO-SHIFT logic
-        if (user?.rol === 'admin') {
-          handleAutoOpenShift();
-        }
       }
     } catch (error) {
       console.log("No hay turno activo");
       updateTurnoActivo(null);
       setTurnoDetalleRaw(null);
-      if (user?.rol === 'admin') {
-        handleAutoOpenShift();
-      }
     }
   };
 
+
+
   const handleAutoOpenShift = async () => {
     try {
-      // Auto-open with 500 base
+      const tId = selectedTiendaId || user?.tienda_id;
+      if (!tId) return;
+
       const res = await turnosAPI.abrir({
         usuario_id: user.id,
-        tienda_id: selectedTiendaId || user.tienda_id,
-        monto_inicial: 500
+        tienda_id: tId,
+        monto_inicial: 0
       });
-      toast.success("Turno Administrador abierto automáticamente ($500)");
+      toast.success("Turno abierto automáticamente");
       loadTurnoActivo();
     } catch (err) {
       console.error("Auto-shift error:", err);
     }
   };
 
-  // --- Hotkeys ---
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      // F1-F4: Tab Switching
-      if (e.key === 'F1') { e.preventDefault(); setActiveTab('POS'); }
-      if (e.key === 'F2') { e.preventDefault(); setActiveTab('POS'); setTimeout(() => searchInputRef.current?.focus(), 50); }
-      if (e.key === 'F4') { e.preventDefault(); setActiveTab('HISTORY'); }
-
-      // F5: Reload Data
-      if (e.key === 'F5') { e.preventDefault(); loadData(); toast.success("Datos actualizados"); }
-
-      // F6: Focus Client Selector (We'll need a ref for this or just show modal)
-      if (e.key === 'F6') { e.preventDefault(); setShowQuickClient(true); }
-
-      // F7: Focus Search (Alternative to F2)
-      if (e.key === 'F7') { e.preventDefault(); searchInputRef.current?.focus(); }
-
-      // F8: Focus Discount/Notes (Quick Access)
-      if (e.key === 'F8') {
-        e.preventDefault();
-        // Assuming we have refs for these or just document behavior
-        // We can't easily focus controlled inputs without refs, but we can set activeTab or similar
-        toast('F8: Atajo reservado (Futuro)');
-      }
-
-      // F9/F10: Pay
-      if (e.key === 'F9' || e.key === 'F10') {
-        e.preventDefault();
-        if (cart.length > 0) setShowPayment(true);
-      }
-      // Esc: Cancel / Close Modals
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (showPayment) setShowPayment(false);
-        else if (showQuickClient) setShowQuickClient(false);
-        else if (prodSeleccionado) setProdSeleccionado(null);
-        else if (busqueda) setBusqueda("");
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab, cart, showPayment, showQuickClient]);
-
   // --- Data Loading ---
   const loadData = async () => {
+    setLoading(true);
     try {
-      // Load clients
-      const clis = await clientesAPI.getAll();
-      setClientes(Array.isArray(clis) ? clis : []);
-
       // Load stores if admin
       if (user?.rol === 'admin') {
         const allTiendas = await tiendasAPI.getAll();
@@ -200,35 +228,22 @@ const RegistrarVentas = () => {
       }
 
       // 1. Cargar productos (Tienda o Global)
-      let prods = [];
+      let prodsRaw = [];
       if (selectedTiendaId) {
-        const tiendaProductos = await tiendasAPI.getProductos(selectedTiendaId);
-        prods = tiendaProductos.map(p => ({
-          id: p.producto_id,
-          nombre: p.nombre,
-          descripcion: p.descripcion,
-          precio_venta: p.precio_venta,
-          precio_compra: p.precio_compra,
-          categoria: p.categoria,
-          marca: p.marca,
-          imagenes: p.imagenes,
-          codigo_barras: p.codigo_barras,
-          cantidad: p.cantidad,
-          stock_minimo: p.stock_minimo,
-          barcodes_agrupados: p.barcodes_agrupados || [],
-          variaciones: p.variaciones || []
-        }));
+        prodsRaw = await tiendasAPI.getProductos(selectedTiendaId);
       } else {
-        prods = await productosAPI.getAll();
+        prodsRaw = await productosAPI.getAll();
       }
-      setProductos(Array.isArray(prods) ? prods : []);
 
-      // 2. Cargar Clientes y Promociones
+      const prods = (prodsRaw || []).map(p => normalizeProduct(p));
+      setProductos(prods);
+
+      // 2. Cargar Clientes y Promociones (Fix #48: single call, no duplicate)
       const [cli, promos] = await Promise.all([
         clientesAPI.getAll(),
         promocionesAPI.getAll(selectedTiendaId || "")
       ]);
-      setClientes(cli);
+      setClientes(Array.isArray(cli) ? cli : []);
       setPromociones(promos || []);
 
       // 3. Calcular Siguiente Ticket (sin sobrescribir el historial visual)
@@ -239,8 +254,9 @@ const RegistrarVentas = () => {
         setNextTicketNo(maxTicket + 1);
       }
     } catch (error) {
-      console.error("Error loading data:", error);
-      toast.error("Error cargando datos iniciales");
+      console.error('Error loading POS data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -334,80 +350,14 @@ const RegistrarVentas = () => {
     }
   }, [clienteId, productos]);
 
-  useEffect(() => {
-    loadData();
-  }, [selectedTiendaId]);
+  // (Removed duplicate loadData useEffect because it is now combined with the initialization useEffect)
 
   // --- Barcode Scanner Logic ---
-  useEffect(() => {
-    if (activeTab !== 'POS' || !queryBusqueda) return;
-
-    // Search for exact barcode match OR check in grouped barcodes
-    const match = productos.find(p =>
-      p.codigo_barras === queryBusqueda ||
-      (p.barcodes_agrupados && p.barcodes_agrupados.includes(queryBusqueda))
-    );
-
-    if (match) {
-      if (!match.variaciones || match.variaciones.length === 0) {
-        agregarAlCarrito(match, null, cantidadBusqueda);
-        setBusqueda(""); // Clear search immediately
-        toast.success(`${match.nombre} añadido`);
-      } else {
-        // If it has variations, we might need to show the selection modal
-        setProdSeleccionado(match);
-        setBusqueda("");
-      }
-    }
-  }, [busqueda, productos, activeTab]);
+  // (Removed greedy useEffect here to prevent instant-add on manual typing. Scanner fires Enter key instead.)
 
   // --- Cart Logic ---
   const getPrecioProducto = (p, currentQty = 1) => {
-    const special = preciosEspeciales[p.id];
-    const originalPrice = p.precio_venta;
-    const globalOffer = p.precio_oferta;
-
-    // Strict multiple rule: qty must be a multiple of min_cantidad (e.g., 24, 48...)
-    if (special && currentQty >= special.min_cantidad && currentQty % special.min_cantidad === 0) {
-      return {
-        precio: Number(special.precio),
-        isWholesale: true,
-        originalPrice: originalPrice,
-        isPromo: true
-      };
-    }
-
-    // PRIORITY: Special Price (for this customer) vs Global Offer
-    // If we have a special price but it's not a multiple, we might still use it if it's better or defined.
-    // However, user specifically mentioned that special prices (mayoreo) were being ignored in favor of global offer.
-
-    let finalPrice = originalPrice;
-    let isPromo = false;
-
-    if (globalOffer && globalOffer > 0) {
-      finalPrice = globalOffer;
-      isPromo = true;
-    }
-
-    // IF CUSTOMER HAS A SPECIAL PRICE, only apply if threshold met
-    if (special && special.precio > 0 && currentQty >= (special.min_cantidad || 1)) {
-      finalPrice = special.precio;
-      return {
-        precio: Number(finalPrice),
-        isWholesale: false,
-        originalPrice: originalPrice,
-        isPromo: true,
-        promoLabel: 'PROMO CLIENTE'
-      };
-    }
-
-    return {
-      precio: Number(finalPrice),
-      isWholesale: false,
-      originalPrice: originalPrice,
-      isPromo: isPromo,
-      promoLabel: 'PROMO'
-    };
+    return getEffectivePrice(p, currentQty, preciosEspeciales);
   };
 
   const agregarPromoAlCarrito = (promo) => {
@@ -458,7 +408,48 @@ const RegistrarVentas = () => {
     setTimeout(() => searchInputRef.current?.focus(), 100);
   };
 
+  const toggleManualDiscount = () => {
+    if (cart.length === 0) return;
+    const lastItem = cart[cart.length - 1];
+    if (lastItem.isCombo) return;
+
+    const prod = productos.find(p => p.id === lastItem.id);
+    if (!prod) return;
+
+    const special = preciosEspeciales[prod.id];
+    const offerPrice = prod.precio_oferta;
+
+    // Choose the best discount price available (Wholesale takes priority)
+    let discountPrice = null;
+    if (special && special.precio > 0) discountPrice = special.precio;
+    else if (offerPrice && offerPrice > 0) discountPrice = offerPrice;
+
+    if (!discountPrice) return toast.error("Este producto no tiene precio de oferta o mayoreo configurado");
+
+    const isCurrentlyDiscounted = Number(lastItem.precio) === Number(discountPrice);
+    const newPrice = isCurrentlyDiscounted ? prod.precio_venta : discountPrice;
+
+    setCart(prev => {
+      const newCart = [...prev];
+      newCart[newCart.length - 1] = {
+        ...lastItem,
+        precio: Number(newPrice),
+        isWholesale: !isCurrentlyDiscounted && !!special,
+        isPromo: !isCurrentlyDiscounted,
+        isManualPrice: !isCurrentlyDiscounted
+      };
+      return newCart;
+    });
+
+    toast.success(isCurrentlyDiscounted ? "Precio normal restaurado" : "Precio de descuento aplicado");
+  };
+
   const agregarAlCarrito = (producto, variacion = null, cantidad = 1) => {
+    if (!turnoActivo) {
+      toast.error("Debes abrir un turno para agregar productos al carrito");
+      setShowTurnoModal(true); // Ayudamos al usuario abriendo el modal de turno
+      return;
+    }
     const stock = variacion ? variacion.stock : producto.cantidad;
 
     if (stock <= 0) {
@@ -472,6 +463,32 @@ const RegistrarVentas = () => {
 
     if (nuevaCantidadTotal > stock) {
       toast.error(`Stock insuficiente. Disponible: ${stock}`);
+      return;
+    }
+
+    // CHECK FOR MANUAL PRICE OVERRIDE (F11)
+    const existingManual = itemsExistentes.find(i => i.isManualPrice);
+    if (existingManual) {
+      const manualItem = {
+        tempId: `${producto.id}-${variacion?.id || 'base'}-manual`,
+        id: producto.id,
+        nombre: producto.nombre,
+        variacion_id: variacion?.id || null,
+        variacion_nombre: variacion?.nombre || null,
+        cantidad: nuevaCantidadTotal,
+        precio: existingManual.precio,
+        isWholesale: existingManual.isWholesale,
+        isPromo: existingManual.isPromo,
+        isManualPrice: true,
+        stockMax: stock
+      };
+      setCart(prev => [
+        ...prev.filter(i => !(i.id === producto.id && i.variacion_id === (variacion?.id || null) && !i.isCombo)),
+        manualItem
+      ]);
+      setBusqueda("");
+      setTimeout(() => searchInputRef.current?.focus(), 50);
+      setProdSeleccionado(null);
       return;
     }
 
@@ -542,6 +559,13 @@ const RegistrarVentas = () => {
   const updateCantidad = (tempId, delta) => {
     const item = cart.find(i => i.tempId === tempId);
     if (!item || item.isCombo) return;
+
+    const nuevaCantidad = item.cantidad + delta;
+    if (nuevaCantidad < 1) {
+      toast.error("La cantidad mínima es 1");
+      return;
+    }
+
     const prod = productos.find(p => p.id === item.id);
     if (!prod) return;
     agregarAlCarrito(prod, item.variacion_id ? { id: item.variacion_id, stock: item.stockMax, nombre: item.variacion_nombre } : null, delta);
@@ -551,8 +575,9 @@ const RegistrarVentas = () => {
     setCart(prev => prev.filter(i => i.tempId !== tempId));
   };
 
-  const subtotal = cart.reduce((acc, item) => acc + (item.cantidad * item.precio), 0);
-  const total = Math.max(0, subtotal - parseFloat(descuentoGlobal || 0));
+  const { subtotal, totalTax, taxBreakdown, total } = getCartTotals(cart, descuentoGlobal, productos);
+  const calculoImpuestos = { desglose: taxBreakdown, total: totalTax };
+  const total_impuestos = totalTax;
 
   const handleSuspend = () => {
     if (cart.length === 0) return;
@@ -586,8 +611,80 @@ const RegistrarVentas = () => {
     toast.success("Venta recuperada");
   };
 
+  const handleCiclarTickets = () => {
+    if (ventasSuspendidas.length === 0) {
+      toast.error("No hay tickets en espera");
+      return;
+    }
+    // If cart is empty, just resume the first one
+    if (cart.length === 0) {
+      handleResume(ventasSuspendidas[0], 0);
+    } else {
+      // Suspend current and resume first
+      const currentCart = [...cart];
+      const currentClienteId = clienteId;
+      const currentNotas = notas;
+      const currentTotal = total;
+
+      handleResume(ventasSuspendidas[0], 0);
+
+      // Add back the previously active cart to the end of suspended list
+      const suspendida = {
+        id: Date.now(),
+        fecha: new Date().toLocaleString(),
+        cart: currentCart,
+        clienteId: currentClienteId,
+        notas: currentNotas,
+        total: currentTotal
+      };
+      const newList = JSON.parse(localStorage.getItem('ventas_suspendidas') || '[]');
+      newList.push(suspendida);
+      setVentasSuspendidas(newList);
+      localStorage.setItem('ventas_suspendidas', JSON.stringify(newList));
+    }
+  };
+
+  const handleReimprimir = async (ventaId) => {
+    try {
+      setPrinting(true);
+      const v = await ventasAPI.getById(ventaId);
+      if (!v) throw new Error("Venta no encontrada");
+
+      // Formatting items for printTicket according to its expected structure
+      const ventaData = {
+        venta: {
+          ...v,
+          cajero: v.cajero || v.usuario_nombre || 'S/N'
+        },
+        productos: (v.detalles || []).map(p => ({
+          nombre: p.producto_nombre || p.nombre || 'Producto',
+          cantidad: p.cantidad,
+          precio: p.precio_unitario || p.precio,
+          subtotal: p.subtotal
+        })),
+        pagos: v.pagos || []
+      };
+
+      printTicket(ventaData, storeConfig, tiendas.find(t => String(t.id) === String(selectedTiendaId)) || user?.tienda);
+      toast.success("Reimpresión enviada");
+    } catch (error) {
+      console.error("Error al reimprimir:", error);
+      toast.error("Error al obtener datos de la venta");
+    } finally {
+      setTimeout(() => setPrinting(false), 1500);
+    }
+  };
+
   const handleConfirmPayment = async (pagos, shouldPrint = false) => {
-    if (loading) return;
+    if (!turnoActivo) {
+      toast.error("No hay un turno activo. Abre uno antes de cobrar.");
+      setLoading(false);
+      return;
+    }
+    if (loading) {
+      console.log("⚠️ Pago ya en proceso, ignorando clic duplicado");
+      return;
+    }
     setLoading(true);
     const isWholesaleApplied = cart.some(i => i.isWholesale);
 
@@ -604,20 +701,30 @@ const RegistrarVentas = () => {
       console.log('clienteId parsed:', clienteId ? parseInt(clienteId) : null);
       console.log('isWholesaleApplied:', isWholesaleApplied);
       console.log('==================');
+      const { totalTax, taxBreakdown } = getCartTotals(cart, descuentoGlobal, productos);
       const payload = {
         cliente_id: clienteId ? parseInt(clienteId) : null,
         productos: cart.flatMap(item => {
+          const prod = productos.find(p => p.id === item.id);
+          let itemTaxes = [];
+          if (prod && prod.impuestos) {
+            try { itemTaxes = typeof prod.impuestos === 'string' ? JSON.parse(prod.impuestos) : prod.impuestos; } catch (e) { }
+          }
           if (item.isCombo) {
             // Distribute price: Put the whole price on the first item, others 0
             return item.items.map((ci, idx) => ({
               id: ci.id,
               cantidad: ci.cantidad * item.cantidad,
-              precio: idx === 0 ? (item.precio / ci.cantidad) : 0
+              precio: idx === 0 ? (item.precio / ci.cantidad) : 0,
+              impuestos: itemTaxes,
+              promocion_id: item.promoId
             }));
           }
-          return [{ id: item.id, variacion_id: item.variacion_id, cantidad: item.cantidad, precio: item.precio }];
+          return [{ id: item.id, variacion_id: item.variacion_id, cantidad: item.cantidad, precio: item.precio, impuestos: itemTaxes }];
         }),
         descuento_global: descuentoGlobal,
+        total_impuestos: totalTax,
+        desglose_impuestos: JSON.stringify(taxBreakdown),
         pagos: pagos.map(p => ({
           metodo: p.metodo,
           monto: p.monto,
@@ -633,32 +740,43 @@ const RegistrarVentas = () => {
         ticket_numero: nextTicketNo
       };
 
-      let response;
-      if (isOnline) {
-        response = await ventasAPI.create(payload);
-      } else {
-        // Offline Mode
-        await saveToQueue(payload);
-        response = { id: `OFF-${Date.now()}` }; // ID Temporal para impresión
-      }
+      let response = await executeSales('insert', payload);
 
       toast.success("¡Venta Exitosa!");
 
-      // Optional Printing
+      // --- Apertura de Gaveta (Hardware) ---
+      const tieneEfectivo = pagos.some(p => p.metodo === 'Efectivo');
+      if (tieneEfectivo) {
+        hardwareService.openCashDrawer();
+      }
+
       if (shouldPrint) {
-        const clienteObj = clientes.find(c => c.id == clienteId);
-        printTicket({
+        setPrinting(true);
+        const minTime = 1200; // Garantizar que se vea la animación
+        const start = Date.now();
+
+        await printTicket({
           tienda: storeConfig,
+          sucursal: tiendas.find(t => t.id === Number(selectedTiendaId) || String(t.id) === String(selectedTiendaId)),
           venta: {
             id: response.id,
             subtotal: subtotal,
             descuento: descuentoGlobal,
-            total: total
+            total_impuestos: total_impuestos,
+            desglose_impuestos: JSON.stringify(calculoImpuestos.desglose),
+            total: total,
+            ticket_numero: nextTicketNo,
+            cajero: user?.username || user?.nombre || 'Administrador',
+            turno_id: turnoActivo?.id || 'N/A'
           },
           productos: cart,
-          cliente: clienteObj,
+          cliente: clientes.find(c => c.id == clienteId),
           pagos: pagos
         });
+
+        const elapsed = Date.now() - start;
+        if (elapsed < minTime) await new Promise(r => setTimeout(r, minTime - elapsed));
+        setPrinting(false);
       }
 
       // Reset
@@ -702,23 +820,83 @@ const RegistrarVentas = () => {
 
   const handleCerrarTurno = async (montoManual = null) => {
     if (!turnoActivo) return;
+
+    // RELIABLE CHECK: Query localStorage directly to avoid state sync issues
+    const suspendedRaw = localStorage.getItem('ventas_suspendidas');
+    let count = 0;
+    try {
+      count = suspendedRaw ? JSON.parse(suspendedRaw).length : 0;
+    } catch (e) { count = 0; }
+
+    console.log("DEBUG: handleCerrarTurno triggered. Storage count:", count);
+
+    // VALIDATION: Intercept if there are pending tickets
+    if (count > 0) {
+      setPendingTicketsCount(count);
+      setPendingMontoFinal(montoManual);
+      setShowPendingTickets(true);
+      return;
+    }
+
+    await confirmCerrarTurno(montoManual);
+  };
+
+  const confirmCerrarTurno = async (montoManual = null) => {
     try {
       const montoFinal = montoManual !== null ? parseFloat(montoManual) : parseFloat(montoTurno) || 0;
       const result = await turnosAPI.cerrar(turnoActivo.id, montoFinal, "");
-      toast.success(`Turno cerrado. Diferencia: $${result.resumen.diferencia.toFixed(2)}`);
+
+      if (hasPermission('hacer_corte')) {
+        toast.success(`Turno cerrado. Diferencia: $${(result.resumen?.diferencia || 0).toFixed(2)}`);
+      } else {
+        toast.success("Turno entregado exitosamente");
+      }
+
+      // Intentar imprimir ticket si tiene permiso
+      if (hasPermission('imprimir_corte')) {
+        try {
+          // Obtener detalle completo del turno recién cerrado para el ticket
+          const fullDetail = await turnosAPI.getById(turnoActivo.id);
+          printCorteTicket({
+            tienda: storeConfig,
+            sucursal: tiendas.find(t => t.id === Number(selectedTiendaId) || String(t.id) === String(selectedTiendaId)),
+            turno: {
+              ...fullDetail,
+              total_monto: fullDetail.venta_total,
+              total_ventas: fullDetail.ventas?.length || 0,
+              ventas_efectivo: fullDetail.totales_por_metodo?.find(pm => pm.metodo === 'Efectivo')?.total || 0,
+              monto_final: montoFinal,
+              diferencia: result.resumen.diferencia
+            },
+            ventasPorCategoria: fullDetail.ventas_por_categoria,
+            totalesPorMetodo: fullDetail.totales_por_metodo,
+            numCancelados: fullDetail.num_cancelados,
+            totalCancelado: fullDetail.cancelado_total
+          });
+        } catch (printError) {
+          console.error("Error al imprimir ticket de corte:", printError);
+          toast.error("No se pudo imprimir el ticket de corte");
+        }
+      }
+
       setShowTurnoModal(false);
       setMontoTurno("");
       updateTurnoActivo(null);
       setTurnoDetalleRaw(null); // Reset detail
 
       // If we came from 'Corte and Logout' request, perform the logout now
-      if (searchParams.get('openCorte') === 'true') {
+      if (isClosingProcess) {
         logout();
         navigate("/");
       }
     } catch (error) {
       toast.error(error.message || "Error cerrando turno");
     }
+  };
+
+  const handleClearSuspended = () => {
+    setVentasSuspendidas([]);
+    localStorage.removeItem('ventas_suspendidas');
   };
 
   // --- Cancel Sale ---
@@ -750,22 +928,160 @@ const RegistrarVentas = () => {
     setPendingAction(null);
   };
 
-  // --- Parse Quantity from Search (6*producto or *6 producto) ---
-  const parseSearchQuantity = (searchText) => {
-    // Pattern: number* or *number at start. Product part is now optional.
-    const match = searchText.match(/^(\d+)\*(.*)$/) || searchText.match(/^\*(\d+)\s*(.*)$/);
-    if (match) {
-      return { cantidad: parseInt(match[1]), query: match[2].trim() };
-    }
-    return { cantidad: 1, query: searchText };
-  };
 
   // --- Render Helpers ---
-  const { cantidad: cantidadBusqueda, query: queryBusqueda } = parseSearchQuantity(busqueda);
+  const { cantidad: cantidadBusqueda, query: queryBusqueda } = parseQtyFromSearch(busqueda || "");
 
-  const productosFiltrados = productos.filter(p =>
-    p.nombre.toLowerCase().includes(queryBusqueda.toLowerCase())
-  ).slice(0, 10); // Limit results for performance
+  const productosFiltrados = productos.map(p => {
+    const q = (queryBusqueda || "").toLowerCase().trim();
+    if (!q) return { ...p, _score: 0 };
+
+    let score = 0;
+    const nameLower = (p.nombre || p.name || "").toLowerCase();
+    const codeLower = (p.codigo_barras || "").toLowerCase();
+
+    // 1. Prioridad Máxima: Coincidencia EXACTA en código principal o alias
+    if (codeLower === q) score += 1000;
+
+    let extraCodes = p.barcodesAgrupados || p.barcodes_agrupados || [];
+    if (typeof extraCodes === 'string') {
+      try { extraCodes = JSON.parse(extraCodes); } catch (e) { extraCodes = [extraCodes]; }
+    }
+    if (Array.isArray(extraCodes)) {
+      if (extraCodes.some(bc => String(bc).toLowerCase() === q)) score += 900;
+      else if (extraCodes.some(bc => String(bc).toLowerCase().includes(q))) score += 150;
+    }
+
+    // 2. Prioridad Variaciones
+    if (p.variaciones?.some(v => v.codigo_barras?.toLowerCase() === q)) score += 850;
+    else if (p.variaciones?.some(v => v.codigo_barras?.toLowerCase().includes(q))) score += 120;
+
+    // 3. Prioridad Nombre
+    if (nameLower === q) score += 500;
+    else if (nameLower.startsWith(q)) score += 300;
+    else if (nameLower.includes(q)) score += 100;
+
+    // 4. Barcode parcial
+    if (codeLower.includes(q) && score < 1000) score += 200;
+
+    return { ...p, _score: score };
+  })
+    .filter(p => p._score > 0)
+    .sort((a, b) => {
+      // Primary: Stock presence (Always push 0 items to bottom)
+      const aHasStock = a.cantidad > 0;
+      const bHasStock = b.cantidad > 0;
+      if (aHasStock && !bHasStock) return -1;
+      if (!aHasStock && bHasStock) return 1;
+
+      // Secondary: Search Score
+      if (b._score !== a._score) return b._score - a._score;
+
+      return 0;
+    });
+
+  // --- Hotkeys ---
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't trigger shortcuts if focus is on an input (except the main search)
+      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+        if (document.activeElement !== searchInputRef.current && e.key !== 'Escape') {
+          return;
+        }
+      }
+
+      // F1: Manual Sale Tab
+      if (e.key === 'F1') { e.preventDefault(); setActiveTab('POS'); }
+      // F2: Clients (Planned in App.jsx but could be here too)
+      // F3: Products (Planned in App.jsx)
+      // F4: History Tab
+      if (e.key === 'F4') { e.preventDefault(); setActiveTab('HISTORY'); }
+
+      // F5: Ciclar Tickets en Espera
+      if (e.key === 'F5') { e.preventDefault(); handleCiclarTickets(); }
+
+      // F6: Suspender Ticket
+      if (e.key === 'F6') { e.preventDefault(); handleSuspend(); }
+
+      // F7: Salida de efectivo
+      if (e.key === 'F7') { e.preventDefault(); setShowCashMovement({ isOpen: true, type: 'SALIDA' }); }
+
+      // F8: Entrada de efectivo
+      if (e.key === 'F8') { e.preventDefault(); setShowCashMovement({ isOpen: true, type: 'ENTRADA' }); }
+
+      // F9: Price Verifier
+      if (e.key === 'F9') { e.preventDefault(); setShowPriceVerifier(true); }
+
+      // F10: Focus Search
+      if (e.key === 'F10') { e.preventDefault(); searchInputRef.current?.focus(); }
+
+      // F11: Alternar Descuento Manual
+      if (e.key === 'F11') { e.preventDefault(); toggleManualDiscount(); }
+
+      // F12: Charge
+      if (e.key === 'F12') {
+        e.preventDefault();
+        if (cart.length > 0) setShowPayment(true);
+        else if (showPayment) { /* Payment modal might handle its own keys */ }
+      }
+
+      // Supr / Delete: Remove last item or selected item
+      if (e.key === 'Delete') {
+        if (cart.length > 0 && !showPayment) {
+          e.preventDefault();
+          removeItem(cart[cart.length - 1].tempId);
+          toast.success("Producto eliminado");
+        }
+      }
+
+      // Ctrl + Delete: Clear cart
+      if (e.ctrlKey && e.key === 'Delete') {
+        e.preventDefault();
+        if (confirm("¿Limpiar todo el carrito?")) {
+          setCart([]);
+          toast.success("Carrito limpiado");
+        }
+      }
+
+      // Ctrl + P: Reimprimir último ticket
+      if (e.ctrlKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (ventas.length > 0) {
+          const lastVenta = ventas.find(v => v.tipo === 'venta' && v.estado !== 'CANCELADA');
+          if (lastVenta) handleReimprimir(lastVenta.id);
+        }
+      }
+
+      // + / - Quantity
+      if (e.key === '+' || e.key === 'Add') {
+        if (cart.length > 0 && !showPayment && !showPriceVerifier && !showPromociones) {
+          e.preventDefault();
+          updateCantidad(cart[cart.length - 1].tempId, 1);
+        }
+      }
+      if (e.key === '-' || e.key === 'Subtract') {
+        if (cart.length > 0 && !showPayment && !showPriceVerifier && !showPromociones) {
+          e.preventDefault();
+          updateCantidad(cart[cart.length - 1].tempId, -1);
+        }
+      }
+
+      // Esc: Close Modals
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (showPayment) setShowPayment(false);
+        else if (showQuickClient) setShowQuickClient(false);
+        else if (showPriceVerifier) setShowPriceVerifier(false);
+        else if (showPromociones) setShowPromociones(false);
+        else if (showCashMovement.isOpen) setShowCashMovement({ isOpen: false, type: 'SALIDA' });
+        else if (prodSeleccionado) setProdSeleccionado(null);
+        else if (busqueda) setBusqueda("");
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cart, showPayment, showPriceVerifier, showPromociones, showCashMovement, showQuickClient, prodSeleccionado, busqueda, selectedIndex, productosFiltrados, cantidadBusqueda, descuentoGlobal, preciosEspeciales, agregarAlCarrito, ventas]);
+
 
   return (
     <div className="h-[calc(100vh-84px)] bg-slate-50/50 dark:bg-slate-900/50 flex flex-col overflow-hidden transition-colors duration-300">
@@ -802,6 +1118,18 @@ const RegistrarVentas = () => {
               )}
             </button>
           ))}
+
+          {/* New Price Verifier Button */}
+          <button
+            onClick={() => setShowPriceVerifier(true)}
+            className="group px-6 py-2.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.15em] flex items-center gap-3 transition-all duration-500 relative overflow-hidden bg-white dark:bg-slate-800/40 text-slate-500 dark:text-slate-400 hover:bg-indigo-50/50 dark:hover:bg-slate-700/50 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-900 shadow-sm"
+          >
+            <div className="flex flex-col items-center relative z-10">
+              <span className="text-[7px] font-black tracking-widest mb-0.5 text-indigo-500/60 group-hover:text-indigo-600">F9</span>
+              <Search size={15} strokeWidth={2.5} />
+            </div>
+            <span className="font-black relative z-10">Verificador</span>
+          </button>
         </div>
 
 
@@ -851,7 +1179,7 @@ const RegistrarVentas = () => {
               loadTurnoActivo();
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all
-              ${turnoActivo
+                ${turnoActivo
                 ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800/50'
                 : 'bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 border dark:border-slate-600'
               }`}
@@ -876,13 +1204,13 @@ const RegistrarVentas = () => {
       </div>
 
       {/* MAIN CONTENT AREA */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-y-auto md:overflow-hidden relative">
 
         {activeTab === 'POS' && (
-          <div className="h-full flex flex-col md:flex-row">
+          <div className="h-auto md:h-full flex flex-col md:flex-row">
 
             {/* LEFT: Products & Search */}
-            <div className="w-full md:w-2/3 p-3 flex flex-col gap-3 overflow-hidden border-none">
+            <div className="w-full md:w-2/3 p-3 flex flex-col gap-3 h-[60vh] md:h-full overflow-hidden border-none shrink-0 md:shrink">
               {/* Search Bar */}
               <div className="relative z-30">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={20} />
@@ -891,14 +1219,32 @@ const RegistrarVentas = () => {
                   className={`input-standard pl-12 pr-28 py-4 text-base shadow-xl ${cantidadBusqueda > 1 ? 'ring-4 ring-indigo-500/20 border-indigo-500' : ''}`}
                   placeholder="Localizar producto..."
                   value={busqueda}
-                  onChange={e => setBusqueda(e.target.value)}
+                  onChange={e => {
+                    setBusqueda(e.target.value);
+                    setSelectedIndex(0);
+                  }}
                   onKeyDown={e => {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setSelectedIndex(prev => Math.min(prev + 1, productosFiltrados.length - 1));
+                      return;
+                    }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setSelectedIndex(prev => Math.max(prev - 1, 0));
+                      return;
+                    }
+
                     if (e.key === 'Enter') {
                       const trimmedBusqueda = busqueda.trim();
                       if (!trimmedBusqueda) return;
 
-                      // 1. Check if it's a customer barcode
-                      const customerByBarcode = clientes.find(c => c.codigo_barras === trimmedBusqueda);
+                      // 1. Check if it's a customer barcode (Dual search: Barcode, RFC/CURP or ID)
+                      const customerByBarcode = clientes.find(c =>
+                        c.codigo_barras === trimmedBusqueda ||
+                        c.nit_dpi === trimmedBusqueda ||
+                        c.id.toString() === trimmedBusqueda
+                      );
                       if (customerByBarcode) {
                         setClienteId(customerByBarcode.id);
                         toast.success(`Cliente: ${customerByBarcode.nombre} Seleccionado`);
@@ -906,15 +1252,42 @@ const RegistrarVentas = () => {
                         return;
                       }
 
-                      // 2. Normal product logic
-                      if (productosFiltrados.length > 0) {
-                        const firstProd = productosFiltrados[0];
-                        if (firstProd.variaciones && firstProd.variaciones.length > 0) {
-                          setProdSeleccionado(firstProd);
+                      // 2. Exact Barcode match first
+                      const exactMatch = productos.find(p =>
+                        String(p.codigo_barras) === trimmedBusqueda ||
+                        (p.barcodes_agrupados && p.barcodes_agrupados.some(b => String(b) === trimmedBusqueda))
+                      );
+
+                      if (exactMatch) {
+                        if (exactMatch.variaciones && exactMatch.variaciones.length > 0) {
+                          setProdSeleccionado(exactMatch);
                         } else {
-                          agregarAlCarrito(firstProd, null, cantidadBusqueda);
+                          agregarAlCarrito(exactMatch, null, cantidadBusqueda);
+                          toast.success(`${exactMatch.nombre} añadido`);
+                        }
+                        setBusqueda("");
+                        return;
+                      }
+
+                      // 3. Selection from results list using selectedIndex
+                      if (productosFiltrados.length > 0) {
+                        const selectedProd = productosFiltrados[selectedIndex] || productosFiltrados[0];
+                        const q = (trimmedBusqueda || "").toLowerCase();
+
+                        // INTELLIGENT DETECTION for variations
+                        const exactVariation = selectedProd.variaciones?.find(v => v.codigo_barras && String(v.codigo_barras).toLowerCase() === q);
+
+                        if (exactVariation) {
+                          agregarAlCarrito(selectedProd, exactVariation, cantidadBusqueda);
+                          setBusqueda("");
+                        } else if (selectedProd.variaciones && selectedProd.variaciones.length > 0) {
+                          setProdSeleccionado(selectedProd);
+                          setBusqueda("");
+                        } else {
+                          agregarAlCarrito(selectedProd, null, cantidadBusqueda);
                           setBusqueda("");
                         }
+                        setSelectedIndex(0);
                       }
                     }
                   }}
@@ -938,7 +1311,7 @@ const RegistrarVentas = () => {
                 <div className="absolute right-5 top-1/2 -translate-y-1/2 flex items-center gap-2">
                   <div className="flex flex-col items-end mr-2">
                     <span className="text-[7px] font-black text-indigo-500 uppercase tracking-[0.2em] leading-none mb-0.5">Atajo Multiplicador</span>
-                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-2 py-1 bg-slate-100 dark:bg-slate-900 rounded-lg border dark:border-slate-800 shadow-sm opacity-60">5 * PRODUCTO</span>
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-2 py-1 bg-slate-100 dark:bg-slate-900 rounded-lg shadow-sm opacity-60">5 * PRODUCTO</span>
                   </div>
                   <div className="h-8 w-px bg-slate-100 dark:bg-slate-700 mx-1"></div>
                   {busqueda && (
@@ -967,7 +1340,7 @@ const RegistrarVentas = () => {
                           {promociones.map(promo => {
                             // Check if ALL products in promo have stock
                             const hasAllStock = promo.productos.every(pi => {
-                              const prod = productos.find(p => p.id === pi.producto_id);
+                              const prod = productos.find(p => Number(p.id) === Number(pi.producto_id));
                               return prod && prod.cantidad >= pi.cantidad;
                             });
 
@@ -976,7 +1349,7 @@ const RegistrarVentas = () => {
                                 key={promo.id}
                                 onClick={() => agregarPromoAlCarrito(promo)}
                                 disabled={!hasAllStock}
-                                className={`card-standard p-6 transition-all duration-500 text-left overflow-hidden active:scale-95 group relative border-2 h-full
+                                className={`card-standard p-6 transition-all duration-500 text-left overflow-hidden active:scale-95 group relative h-full
                                     ${hasAllStock
                                     ? 'hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/10 hover:-translate-y-1'
                                     : 'opacity-50 grayscale border-slate-200 dark:border-slate-800 cursor-not-allowed bg-slate-50 dark:bg-slate-900/40'}
@@ -996,7 +1369,7 @@ const RegistrarVentas = () => {
                                   <div>
                                     <div className="flex justify-between items-start mb-3">
                                       <span className={`text-[10px] font-black uppercase tracking-[0.2em] px-3 py-1 rounded-xl shadow-sm ${hasAllStock ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400' : 'bg-slate-100 text-slate-400 dark:bg-slate-800'}`}>
-                                        {hasAllStock ? 'COMBINADO TOP' : 'S/ STOCK'}
+                                        {hasAllStock ? 'COMBINADO TOP' : 'AGOTADO'}
                                       </span>
                                     </div>
                                     <h3 className="text-sm font-black text-slate-800 dark:text-white uppercase leading-tight tracking-tight mb-4 group-hover:text-indigo-600 transition-colors line-clamp-2">{promo.nombre}</h3>
@@ -1004,7 +1377,7 @@ const RegistrarVentas = () => {
                                   <div className="flex items-end justify-between mt-auto">
                                     <div className="flex flex-col">
                                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Precio Combo</span>
-                                      <span className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter">{currency}{promo.precio_combo}</span>
+                                      <span className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter">{formatCurrency(promo.precio_combo)}</span>
                                     </div>
                                     {hasAllStock && (
                                       <div className="bg-indigo-600 text-white p-3 rounded-2xl shadow-2xl shadow-indigo-500/40 transform translate-y-4 opacity-0 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-500">
@@ -1042,7 +1415,7 @@ const RegistrarVentas = () => {
                                   }
                                   agregarAlCarrito(p);
                                 }}
-                                className={`flex items-center gap-3 bg-white dark:bg-slate-800 p-3 rounded-2xl border dark:border-slate-700 hover:border-indigo-500/50 hover:shadow-lg transition-all text-left group active:scale-95 relative overflow-hidden
+                                className={`flex items-center gap-3 bg-white dark:bg-slate-800 p-3 rounded-2xl hover:shadow-lg transition-all text-left group active:scale-95 relative overflow-hidden
                                   ${p.cantidad <= 0 ? 'opacity-50 grayscale cursor-not-allowed' : ''}
                                 `}
                               >
@@ -1060,9 +1433,9 @@ const RegistrarVentas = () => {
                                     {getPrecioProducto(p).isPromo && <Tag size={10} className="text-amber-500" />}
                                   </p>
                                   <div className="flex items-center gap-1.5">
-                                    <p className="text-[11px] font-bold text-indigo-500">{currency}{getPrecioProducto(p).precio}</p>
+                                    <p className="text-[11px] font-bold text-indigo-500">{formatCurrency(getPrecioProducto(p).precio)}</p>
                                     {getPrecioProducto(p).isPromo && (
-                                      <p className="text-[9px] text-slate-400 line-through opacity-50">{currency}{getPrecioProducto(p).originalPrice}</p>
+                                      <p className="text-[9px] text-slate-400 line-through opacity-50">{formatCurrency(getPrecioProducto(p).originalPrice)}</p>
                                     )}
                                   </div>
                                 </div>
@@ -1083,110 +1456,114 @@ const RegistrarVentas = () => {
                     )}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3 animate-in fade-in zoom-in duration-300">
-                    {productosFiltrados.map(prod => {
-                      const isOutOfStock = prod.cantidad <= 0;
-                      return (
-                        <div
-                          key={prod.id}
-                          onClick={() => {
-                            if (isOutOfStock) {
-                              toast.error("Producto agotado");
-                              return;
-                            }
-                            if (prod.variaciones && prod.variaciones.length > 0) {
-                              setProdSeleccionado(prod);
-                            } else {
-                              agregarAlCarrito(prod, null, cantidadBusqueda);
-                              setBusqueda("");
-                            }
-                          }}
-                          className={`card-standard p-5 cursor-pointer flex flex-col justify-between group relative overflow-hidden h-[150px] border-2 transition-all duration-500
-                            ${isOutOfStock
-                              ? 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-800 opacity-60 grayscale'
-                              : prod.cantidad <= 5
-                                ? 'border-amber-200 bg-amber-50/30 dark:bg-amber-900/10 hover:border-amber-400 hover:shadow-2xl hover:shadow-amber-500/10'
-                                : 'hover:border-indigo-400 hover:shadow-2xl hover:shadow-indigo-500/10 hover:-translate-y-1'}
-                          `}
+                  <div className="flex flex-col gap-1 p-2 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                    <div className="bg-slate-100 dark:bg-slate-800/80 px-4 py-2 rounded-xl mb-1 grid grid-cols-12 gap-4 text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] border border-slate-200 dark:border-slate-700">
+                      <div className="col-span-2">CÓDIGO</div>
+                      <div className="col-span-6">DESCRIPCIÓN DEL PRODUCTO</div>
+                      <div className="col-span-2 text-center">EXISTENCIA</div>
+                      <div className="col-span-2 text-right">PRECIO VTA</div>
+                    </div>
+
+                    {loading ? (
+                      <div className="p-3 space-y-2">
+                        {[1, 2, 3, 4, 5, 6].map(i => (
+                          <div key={i} className="h-[74px] bg-slate-100 dark:bg-slate-800 animate-pulse rounded-2xl border border-slate-200/50 dark:border-slate-700/50" />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="w-full bg-white dark:bg-slate-900/40 rounded-3xl overflow-hidden shadow-2xl shadow-slate-200/50 dark:shadow-none" style={{ height: 'calc(100vh - 340px)', minHeight: '400px' }}>
+                        <List
+                          height={Math.max(400, window.innerHeight - 340)}
+                          width="100%"
+                          itemCount={productosFiltrados.length}
+                          itemSize={76}
                         >
-                          {isOutOfStock && (
-                            <div className="absolute inset-0 bg-slate-900/10 dark:bg-black/20 flex items-center justify-center rotate-12 pointer-events-none z-20">
-                              <span className="bg-red-600 text-white text-[11px] font-black px-12 py-1.5 shadow-2xl uppercase tracking-[0.4em] backdrop-blur-md border-2 border-white/20">Sin Stock</span>
-                            </div>
-                          )}
+                          {({ index, style }) => {
+                            const prod = productosFiltrados[index];
+                            if (!prod) return null;
+                            const isSelected = index === selectedIndex;
+                            const isOutOfStock = prod.cantidad <= 0;
+                            const precioData = getPrecioProducto(prod);
 
-                          <div className="absolute -top-2 -right-2 p-4 text-slate-500/5 group-hover:text-indigo-500/10 transition-colors duration-700 pointer-events-none">
-                            <Package size={80} strokeWidth={1} />
-                          </div>
-
-                          <div className="relative z-10">
-                            <div className="flex justify-between items-start gap-3">
-                              <h3 className="font-black text-slate-800 dark:text-white text-[12px] leading-tight uppercase tracking-tight mb-1.5 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors line-clamp-2">{prod.nombre}</h3>
-                              {cantidadBusqueda > 1 && !isOutOfStock && (
-                                <span className="text-[10px] bg-indigo-600 text-white px-2.5 py-1 rounded-xl font-black tracking-widest shadow-xl shrink-0 animate-pulse">x{cantidadBusqueda}</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2.5">
-                              <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border shadow-sm ${isOutOfStock ? 'bg-slate-100 text-slate-400 border-slate-200' :
-                                prod.cantidad <= 5 ? 'bg-amber-50 text-amber-600 border-amber-200/50' : 'bg-emerald-50 text-emerald-600 border-emerald-200/50'
-                                }`}>
-                                {isOutOfStock ? 'AGOTADO' : `DISP: ${prod.cantidad}`}
-                              </span>
-                              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest truncate max-w-[90px] opacity-60 group-hover:opacity-100 transition-opacity">{prod.marca}</span>
-                            </div>
-                          </div>
-
-                          <div className="mt-auto flex justify-between items-end relative z-10">
-                            <div className="flex flex-col">
-                              {getPrecioProducto(prod).isPromo && (
-                                <span className="text-[10px] text-slate-400 line-through font-bold opacity-60 leading-none mb-1">{currency}{getPrecioProducto(prod).originalPrice}</span>
-                              )}
-                              <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tighter leading-none group-hover:scale-110 origin-left transition-transform duration-500">
-                                {currency}{getPrecioProducto(prod).precio}
-                                {getPrecioProducto(prod).isPromo && (
-                                  <span className={`ml-2 text-[8px] text-white px-2 py-0.5 rounded-lg shadow-2xl align-middle border border-white/20 ${getPrecioProducto(prod).promoLabel === 'PROMO CLIENTE' ? 'bg-indigo-600' : 'bg-amber-500'}`}>
-                                    {getPrecioProducto(prod).promoLabel}
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                            <div className="flex gap-2">
-                              {!isOutOfStock ? (
-                                <div className="p-3 bg-indigo-600 text-white rounded-2xl shadow-2xl shadow-indigo-500/40 transform translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
-                                  <Plus size={22} strokeWidth={3} />
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigate(`/store/compras?productId=${prod.id}`);
+                            return (
+                              <div style={style} className="px-2 py-1">
+                                <div
+                                  onClick={() => {
+                                    if (isOutOfStock) {
+                                      toast.error("Producto agotado");
+                                      return;
+                                    }
+                                    if (prod.variaciones && prod.variaciones.length > 0) {
+                                      setProdSeleccionado(prod);
+                                    } else {
+                                      agregarAlCarrito(prod, null, cantidadBusqueda);
+                                      setBusqueda("");
+                                      setSelectedIndex(0);
+                                    }
                                   }}
-                                  className="p-3 bg-slate-900 text-white rounded-2xl shadow-2xl transform translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 hover:bg-black"
-                                  title="Reabastecer"
+                                  onMouseEnter={() => setSelectedIndex(index)}
+                                  className={`grid grid-cols-12 gap-4 items-center p-3 px-4 h-full rounded-xl cursor-pointer transition-all border-l-4 duration-200
+                                    ${isSelected
+                                      ? 'bg-indigo-600 text-white border-indigo-400 shadow-lg shadow-indigo-600/20 translate-x-1'
+                                      : isOutOfStock
+                                        ? 'bg-rose-50/50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-900/30 text-rose-800 dark:text-rose-300'
+                                        : 'bg-white dark:bg-slate-800/40 border-transparent text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60'}
+                                    ${isOutOfStock && !isSelected ? 'opacity-70 grayscale-[0.5]' : ''}
+                                  `}
                                 >
-                                  <RefreshCcw size={18} />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                                  <div className={`col-span-2 text-[10px] font-black tracking-tight ${isSelected ? 'text-indigo-100' : 'text-slate-400 dark:text-slate-500'}`}>
+                                    {prod.codigo_barras || 'S/N'}
+                                  </div>
+                                  <div className="col-span-6 font-black text-sm uppercase truncate tracking-tight">
+                                    {prod.nombre}
+                                    {isSelected && <span className="ml-2 text-[10px] opacity-60">← Presione ENTER</span>}
+                                  </div>
+                                  <div className="col-span-2 text-center">
+                                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${isSelected
+                                      ? 'bg-white/20 text-white'
+                                      : isOutOfStock
+                                        ? 'bg-rose-100 text-rose-600'
+                                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200/50'
+                                      }`}>
+                                      {isOutOfStock ? 'AGOTADO' : `${prod.cantidad} Unid.`}
+                                    </span>
+                                  </div>
+                                  <div className="col-span-2 text-right flex flex-col items-end">
+                                    <span className="text-[16px] font-black tracking-tighter">
+                                      {formatCurrency(precioData.precio)}
+                                    </span>
+                                    {precioData.isPromo && (
+                                      <span className={`text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest ${isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>
+                                        {precioData.promoLabel}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        </List>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {/* Turn Summary - Fill space & Provide info */}
                 {turnoActivo && !busqueda && (
                   <div className="mt-8 px-4 pb-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="card-standard p-4 flex items-center gap-4 hover:border-indigo-200">
-                      <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                        <TrendingUp size={20} />
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Ventas del Turno</p>
-                        <p className="text-lg font-black text-slate-800 dark:text-white leading-none">
-                          {ventas.filter(v => v.tipo === 'venta' && v.estado !== 'CANCELADA').length} <span className="text-[9px] text-slate-400">Tickets</span>
-                        </p>
+                    <div className="card-standard p-4 flex flex-col justify-center border-indigo-100 dark:border-indigo-900/30 bg-indigo-50/20 dark:bg-indigo-900/5">
+                      <p className="text-[8px] font-black text-indigo-500 uppercase tracking-[0.2em] mb-2 text-center">Navegación Rápida</p>
+                      <div className="flex justify-center flex-wrap gap-2">
+                        {[
+                          { k: 'F1', n: 'Ventas' },
+                          { k: 'F5', n: 'Tickets' },
+                          { k: 'F6', n: 'Espera' }
+                        ].map(s => (
+                          <div key={s.k} className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-1.5 min-w-[65px] justify-center">
+                            <span className="text-[9px] font-black text-indigo-600">{s.k}</span>
+                            <span className="text-[7px] font-bold text-slate-500 uppercase">{s.n}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
 
@@ -1197,20 +1574,42 @@ const RegistrarVentas = () => {
                       <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Efectivo en Caja</p>
                         <p className="text-lg font-black text-slate-800 dark:text-white leading-none">
-                          {currency}{(Number(turnoActivo.monto_inicial) + Number(turnoDetalleRaw?.totales_por_metodo?.find(t => t.metodo === 'Efectivo')?.total || 0)).toFixed(2)}
+                          {currency}{(parseFloat(turnoActivo.monto_inicial || 0) + parseFloat(turnoDetalleRaw?.totales_por_metodo?.find(t => t.metodo === 'Efectivo')?.total || 0)).toFixed(2)}
                         </p>
                       </div>
                     </div>
 
-                    <div className="card-standard p-4 flex items-center gap-4 hover:border-amber-200">
-                      <div className="w-10 h-10 bg-amber-50 dark:bg-amber-900/30 rounded-xl flex items-center justify-center text-amber-600 dark:text-amber-400">
-                        <User size={20} />
+                    <div className="card-standard p-4 flex flex-col justify-center border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/10">
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 text-center">Accesos Rápidos</p>
+                      <div className="flex justify-center gap-4">
+                        <div className="flex flex-col items-center gap-1 group cursor-pointer" onClick={() => setShowCashMovement({ isOpen: true, type: 'SALIDA' })}>
+                          <div className="w-8 h-8 rounded-lg bg-rose-50 dark:bg-rose-900/20 flex items-center justify-center text-rose-500 group-hover:bg-rose-500 group-hover:text-white transition-all shadow-sm">
+                            <TrendingDown size={14} />
+                          </div>
+                          <span className="text-[7px] font-black text-rose-500 uppercase tracking-widest leading-none">F7 Salida</span>
+                        </div>
+                        <div className="flex flex-col items-center gap-1 group cursor-pointer" onClick={() => setShowCashMovement({ isOpen: true, type: 'ENTRADA' })}>
+                          <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center text-emerald-500 group-hover:bg-emerald-500 group-hover:text-white transition-all shadow-sm">
+                            <TrendingUp size={14} />
+                          </div>
+                          <span className="text-[7px] font-black text-emerald-500 uppercase tracking-widest leading-none">F8 Entrada</span>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Operador</p>
-                        <p className="text-xs font-black text-slate-800 dark:text-white leading-none uppercase truncate max-w-[120px]">
-                          {user?.username}
-                        </p>
+                    </div>
+
+                    <div className="card-standard p-4 flex flex-col justify-center border-amber-100 dark:border-amber-900/30 bg-amber-50/20 dark:bg-amber-900/5">
+                      <p className="text-[8px] font-black text-amber-600 uppercase tracking-[0.2em] mb-2 text-center">Operaciones y Pagos</p>
+                      <div className="flex justify-center flex-wrap gap-2">
+                        {[
+                          { k: 'F9', n: 'Consultar' },
+                          { k: 'F11', n: 'Descuento' },
+                          { k: 'F12', n: 'COBRAR' }
+                        ].map(s => (
+                          <div key={s.k} className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-1.5 min-w-[75px] justify-center">
+                            <span className={`text-[9px] font-black ${s.k === 'F12' ? 'text-emerald-500' : 'text-amber-550'}`}>{s.k}</span>
+                            <span className="text-[7px] font-bold text-slate-500 uppercase">{s.n}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -1219,10 +1618,10 @@ const RegistrarVentas = () => {
             </div>
 
             {/* RIGHT: Cart & Actions */}
-            <div className="w-full md:w-1/3 bg-white dark:bg-slate-900 border-l dark:border-slate-800 flex flex-col h-full shadow-2xl z-20 overflow-hidden">
+            <div className="w-full md:w-1/3 bg-white dark:bg-slate-900 border-t md:border-t-0 flex flex-col h-[70vh] md:h-full shadow-2xl z-20 overflow-hidden shrink-0 md:shrink">
 
               {/* Client Selector - COMPACT */}
-              <div className="p-3 border-b dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="p-3 bg-slate-50/50 dark:bg-slate-900/50">
                 <div className="flex gap-2">
                   <select
                     className="select-standard flex-1 text-xs"
@@ -1274,7 +1673,7 @@ const RegistrarVentas = () => {
                         <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold mt-0.5">{currency}{item.precio}</div>
                       </div>
                       <div className="flex flex-col items-center gap-0.5">
-                        <div className={`flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900 rounded-lg border dark:border-slate-700 p-0.5 shadow-inner ${item.isCombo ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <div className={`flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900 rounded-lg p-0.5 shadow-inner ${item.isCombo ? 'opacity-50 pointer-events-none' : ''}`}>
                           <button onClick={() => updateCantidad(item.tempId, -1)} className="p-0.5 px-1.5 hover:bg-white dark:hover:bg-slate-800 text-slate-400 hover:text-indigo-600 rounded-md transition-colors"><Minus size={10} /></button>
                           <span className="w-5 text-center font-bold text-[10px] text-slate-700 dark:text-white">{item.cantidad}</span>
                           <button onClick={() => updateCantidad(item.tempId, 1)} className="p-0.5 px-1.5 hover:bg-white dark:hover:bg-slate-800 text-slate-400 hover:text-indigo-600 rounded-md transition-colors"><Plus size={10} /></button>
@@ -1290,7 +1689,7 @@ const RegistrarVentas = () => {
               </div>
 
               {/* Summary & Actions - COMPACTED */}
-              <div className="px-5 py-3 bg-slate-50/50 dark:bg-slate-900 border-t dark:border-slate-800 space-y-3">
+              <div className="px-5 py-3 bg-slate-50/50 dark:bg-slate-900 space-y-3">
                 {/* Discount & Notes - Compact Integrated Row */}
                 <div className="flex gap-2">
                   <div className="flex-1 relative group">
@@ -1306,8 +1705,15 @@ const RegistrarVentas = () => {
                     <input
                       type="number"
                       className="input-standard py-2 text-[10px] text-center text-rose-500 font-bold focus:border-rose-500"
-                      value={descuentoGlobal}
-                      onChange={e => setDescuentoGlobal(e.target.value)}
+                      value={localDiscount}
+                      onChange={e => setLocalDiscount(e.target.value)}
+                      onBlur={handleApplyDiscount}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          handleApplyDiscount();
+                          e.target.blur();
+                        }
+                      }}
                       placeholder="DESC"
                     />
                     <span className="absolute -top-1.5 left-1 bg-slate-50 dark:bg-slate-900 px-1 text-[7px] font-bold uppercase text-slate-400">Desc</span>
@@ -1321,6 +1727,16 @@ const RegistrarVentas = () => {
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Subtotal</span>
                     <span className="text-sm font-black text-slate-700 dark:text-slate-200">{currency}{subtotal.toFixed(2)}</span>
                   </div>
+
+                  {/* IMPUESTOS DINÁMICOS */}
+                  {Object.entries(calculoImpuestos.desglose).map(([tipo, val]) => (
+                    <div key={tipo} className="flex justify-between items-center px-2 mt-1 relative z-10">
+                      <span className="text-[9px] font-black text-slate-400/80 uppercase tracking-widest">{tipo} {val.porcentaje}%</span>
+                      <span className="text-[11px] font-bold text-slate-500 no-underline text-right">
+                        {val.total < 0 ? '-' : '+'} {currency}{Math.abs(val.total).toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
 
                   {descuentoGlobal > 0 && (
                     <div className="flex justify-between items-center px-3 py-2 bg-rose-50/50 dark:bg-rose-900/10 rounded-2xl mt-2 border border-rose-100 dark:border-rose-900/30 relative z-10">
@@ -1348,17 +1764,32 @@ const RegistrarVentas = () => {
                     onClick={handleSuspend}
                     disabled={cart.length === 0}
                     className="col-span-1 btn-secondary py-3 flex items-center justify-center text-orange-500 hover:text-orange-600"
-                    title="Suspender"
+                    title="Suspender esta venta para cobrar después (F6)"
                   >
                     <Pause size={18} />
                   </button>
                   <button
+                    onClick={() => {
+                      if (cart.length > 0 && window.confirm("¿Vaciar todo el carrito?")) {
+                        setCart([]);
+                        setDescuentoGlobal(0);
+                        toast.success("Carrito vaciado");
+                        setTimeout(() => searchInputRef.current?.focus(), 150);
+                      }
+                    }}
+                    disabled={cart.length === 0}
+                    className="col-span-1 btn-secondary py-3 flex items-center justify-center text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/10"
+                    title="Limpiar todo el carrito (Ctrl + Supr)"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                  <button
                     onClick={() => setShowPayment(true)}
                     disabled={cart.length === 0}
-                    className="col-span-3 btn-primary py-3 flex items-center justify-center gap-2 shadow-xl shadow-indigo-500/20"
+                    className="col-span-2 btn-primary py-3 flex items-center justify-center gap-2 shadow-xl shadow-indigo-500/20"
                   >
                     <div className="flex flex-col items-center leading-none text-[8px] font-bold uppercase text-white/40 tracking-widest">
-                      <span>F9</span>
+                      <span>F12</span>
                     </div>
                     <CreditCard size={14} />
                     <span>Confirmar y Cobrar</span>
@@ -1431,7 +1862,7 @@ const RegistrarVentas = () => {
                         <tr key={`${m.tipo}-${m.id}-${idx}`} className={`hover:bg-indigo-50/30 dark:hover:bg-indigo-500/5 transition-all group ${isCancelled ? 'opacity-50 grayscale bg-red-50/5' : ''}`}>
                           <td className="p-4 px-6">
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">{date.toLocaleDateString()}</span>
+                              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">{formatDate(date)}</span>
                               <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
                           </td>
@@ -1499,10 +1930,7 @@ const RegistrarVentas = () => {
                                     <Ban size={14} />
                                   </button>
                                   <button
-                                    onClick={() => {
-                                      // Lógica de reimpresión similar a MovementHistory si se desea
-                                      toast.success("Reimpresión enviada");
-                                    }}
+                                    onClick={() => handleReimprimir(m.id)}
                                     className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-all"
                                     title="Reimprimir Ticket"
                                   >
@@ -1544,7 +1972,7 @@ const RegistrarVentas = () => {
                   key={v.id}
                   onClick={() => agregarAlCarrito(prodSeleccionado, v)}
                   disabled={v.stock <= 0}
-                  className={`w-full flex justify-between p-3 rounded-lg border 
+                  className={`w-full flex justify-between p-3 rounded-lg border
                                         ${v.stock > 0
                       ? 'hover:bg-blue-50 dark:hover:bg-blue-900/20 border-gray-200 dark:border-gray-700'
                       : 'opacity-50 cursor-not-allowed bg-gray-100'}`}
@@ -1571,18 +1999,23 @@ const RegistrarVentas = () => {
         onConfirm={handleConfirmPayment}
         isWholesale={cart.some(i => i.isWholesale)}
         loading={loading}
+        selectedCustomer={clientes.find(c => String(c.id) === String(clienteId))}
+        cartItemsCount={cart.reduce((acc, item) => acc + item.cantidad, 0)}
       />
 
       <QuickClientModal
         isOpen={showQuickClient}
-        onClose={() => setShowQuickClient(false)}
+        onClose={() => {
+          setShowQuickClient(false);
+          setTimeout(() => searchInputRef.current?.focus(), 150);
+        }}
         onSuccess={(client) => {
           setClientes([...clientes, client]);
           setClienteId(client.id);
+          setTimeout(() => searchInputRef.current?.focus(), 150);
         }}
       />
 
-      {/* TURNO MODAL (OPEN/CLOSE) */}
       {/* TURNO MODAL (OPEN/CLOSE) */}
       {showTurnoModal && (
         <div className="modal-overlay">
@@ -1633,18 +2066,18 @@ const RegistrarVentas = () => {
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-bold text-emerald-700/60 dark:text-emerald-400/60 uppercase">
-                        <span>ID: #{turnoActivo.id}</span>
+                        <span>ID: #{turnoActivo?.id}</span>
                         <span>•</span>
-                        <span>Desde: {new Date(turnoActivo.fecha_apertura).toLocaleTimeString()}</span>
+                        <span>Desde: {turnoActivo?.fecha_apertura ? new Date(turnoActivo.fecha_apertura).toLocaleTimeString() : 'N/A'}</span>
                       </div>
                     </div>
 
-                    {turnoDetalleRaw ? (
+                    {turnoDetalleRaw && hasPermission('hacer_corte') ? (
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-3">
                           <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-700/50 text-slate-800 dark:text-white">
                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Fondo de Caja (Monto Inicial)</span>
-                            <span className="text-lg font-black">${Number(turnoActivo.monto_inicial).toFixed(2)}</span>
+                            <span className="text-lg font-black">${Number(turnoActivo?.monto_inicial || 0).toFixed(2)}</span>
                           </div>
                           <div className="bg-indigo-600 text-white p-4 rounded-2xl border border-indigo-500 shadow-lg shadow-indigo-600/20 relative overflow-hidden group">
                             <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full -mr-8 -mt-8 blur-xl group-hover:bg-white/20 transition-all"></div>
@@ -1658,8 +2091,8 @@ const RegistrarVentas = () => {
                           <div className="flex justify-between items-center mb-4">
                             <h4 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Desglose por Método</h4>
                             {turnoDetalleRaw.mayoreo_total > 0 && (
-                              <div className="px-3 py-1 bg-amber-500 text-white rounded-lg text-[8px] font-black uppercase tracking-widest animate-pulse shadow-md shadow-amber-500/20">
-                                Mayoreo: ${Number(turnoDetalleRaw.mayoreo_total).toFixed(2)}
+                              <div className="px-3 py-1 bg-amber-500 text-white rounded-lg text-[8px] font-black uppercase tracking-widest shadow-md shadow-amber-500/20">
+                                TOTAL MAYOREO: ${Number(turnoDetalleRaw.mayoreo_total).toFixed(2)}
                               </div>
                             )}
                           </div>
@@ -1710,15 +2143,28 @@ const RegistrarVentas = () => {
                           )}
                           <div className="mt-6 pt-4 border-t border-indigo-100 dark:border-indigo-800/30 flex justify-between items-end text-indigo-900 dark:text-indigo-300">
                             <div>
-                              <span className="text-[10px] font-black uppercase tracking-widest opacity-60 block">Efectivo Final</span>
-                              <span className="text-[8px] font-bold uppercase tracking-widest opacity-40">(Fondo + Ventas Efectivo)</span>
+                              <span className="text-[10px] font-black uppercase tracking-widest opacity-60 block">Efectivo a Entregar</span>
+                              <span className="text-[8px] font-bold uppercase tracking-widest opacity-40">(Ventas Efectivo del Turno)</span>
                             </div>
                             <div className="text-right">
                               <span className="text-2xl font-black tracking-tighter block leading-none">
-                                ${(Number(turnoActivo.monto_inicial) + Number(turnoDetalleRaw.totales_por_metodo?.find(t => t.metodo === 'Efectivo')?.total || 0)).toFixed(2)}
+                                ${Number(turnoDetalleRaw?.totales_por_metodo?.find(t => t.metodo === 'Efectivo')?.total || 0).toFixed(2)}
                               </span>
                             </div>
                           </div>
+                        </div>
+                      </div>
+                    ) : turnoDetalleRaw && !hasPermission('hacer_corte') ? (
+                      <div className="space-y-6 mt-8">
+                        <div className="bg-indigo-50 dark:bg-indigo-900/10 p-8 rounded-[2.5rem] text-center border border-indigo-100 dark:border-indigo-800/30">
+                          <div className="w-20 h-20 bg-indigo-600 text-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-xl shadow-indigo-600/30">
+                            <DollarSign size={40} />
+                          </div>
+                          <h3 className="text-xl font-black text-slate-800 dark:text-white mb-2 uppercase tracking-tight">Entrega de Caja</h3>
+                          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest leading-relaxed">
+                            Por favor, ingresa el total de monedas y billetes que tienes en tu cajón.<br />
+                            Tu corte de caja será enviado al administrador para su revisión.
+                          </p>
                         </div>
                       </div>
                     ) : (
@@ -1746,7 +2192,10 @@ const RegistrarVentas = () => {
                     <div className="p-5 bg-amber-100/50 dark:bg-amber-900/20 border border-amber-200/50 dark:border-amber-800/30 rounded-2xl">
                       <p className="text-[10px] text-amber-700 dark:text-amber-400 font-bold uppercase tracking-wide flex items-start gap-3 leading-relaxed">
                         <AlertCircle size={16} className="shrink-0 text-amber-500" />
-                        El sistema comparará este total con las ventas registradas. El faltante o sobrante será reportado.
+                        {hasPermission('hacer_corte')
+                          ? <span>El conteo físico de monedas y billetes debe coincidir con el <strong>Efectivo a Entregar</strong> (las ventas del turno). El fondo inicial no se suma a este arqueo.</span>
+                          : <span>Cuenta físicamente todas las monedas y billetes (sin incluir tu fondo base) e ingresa el total exacto.</span>
+                        }
                       </p>
                     </div>
                   </div>
@@ -1875,65 +2324,7 @@ const RegistrarVentas = () => {
           </div>
         </div>
       )}
-      {/* TICKET DE IMPRESIÓN TÉRMICA (Oculto en pantalla) */}
-      <div id="thermal-ticket" className="hidden print:block print:w-[58mm] xl:print:w-[80mm] mx-auto bg-white p-2 text-black font-mono text-[10px] leading-tight transition-all">
-        <div className="text-center border-b border-dashed border-gray-400 pb-2 mb-2">
-          <h2 className="font-bold text-xs uppercase">{user?.tienda_nombre || 'Minisuper'}</h2>
-          <p>{user?.tienda_direccion || 'Dirección no disponible'}</p>
-          <p>Tel: {user?.tienda_telefono || '-'}</p>
-        </div>
 
-        <div className="mb-2">
-          <p>Fecha: {new Date().toLocaleString()}</p>
-          <p>Cajero: {user?.username}</p>
-          <p>Cliente: {clientes.find(c => c.id == clienteId)?.nombre || 'General'}</p>
-        </div>
-
-        <div className="border-b border-dashed border-gray-400 mb-2">
-          <div className="flex font-bold mb-1">
-            <span className="flex-1">Producto</span>
-            <span className="w-8 text-center">Cant</span>
-            <span className="w-16 text-right">Total</span>
-          </div>
-          {cart.map(item => (
-            <div key={item.tempId} className="flex mb-1">
-              <span className="flex-1 truncate uppercase">{item.nombre}</span>
-              <span className="w-8 text-center">{item.cantidad}</span>
-              <span className="w-16 text-right">${(item.cantidad * item.precio).toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="text-right space-y-1">
-          <p>Subtotal: ${subtotal.toFixed(2)}</p>
-          {descuentoGlobal > 0 && <p>Desc: -${descuentoGlobal}</p>}
-          <p className="font-bold text-xs">TOTAL: ${total.toFixed(2)}</p>
-        </div>
-
-        <div className="text-center mt-6 pt-2 border-t border-dashed border-gray-400">
-          <p className="font-bold">¡GRACIAS POR SU COMPRA!</p>
-          <p className="text-[8px] mt-1 ">Vuelva pronto</p>
-        </div>
-      </div>
-
-      <style>{`
-        @media print {
-            body * { visibility: hidden; }
-            #thermal-ticket, #thermal-ticket * { visibility: visible; }
-            #thermal-ticket { 
-                position: absolute; 
-                left: 0; 
-                top: 0; 
-                width: 100%;
-                margin: 0;
-                padding: 10px;
-            }
-            @page {
-                margin: 0;
-                size: portrait;
-            }
-        }
-      `}</style>
       <PinValidationModal
         isOpen={showPinModal}
         onClose={() => setShowPinModal(false)}
@@ -1942,7 +2333,128 @@ const RegistrarVentas = () => {
         actionType="CANCELAR_VENTA"
         entityId={pendingAction?.id}
       />
-    </div >
+      <PriceVerifierModal
+        isOpen={showPriceVerifier}
+        onClose={() => setShowPriceVerifier(false)}
+        tiendaId={selectedTiendaId}
+      />
+
+      {/* PRINTING ANIMATION OVERLAY */}
+      <AnimatePresence>
+        {printing && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.8, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.8, y: 20 }}
+              className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] shadow-2xl border border-white/20 flex flex-col items-center text-center max-w-xs w-full mx-4"
+            >
+              <div className="relative mb-6">
+                <motion.div
+                  animate={{
+                    rotate: 360,
+                    scale: [1, 1.1, 1]
+                  }}
+                  transition={{
+                    rotate: { duration: 2, repeat: Infinity, ease: "linear" },
+                    scale: { duration: 1, repeat: Infinity, ease: "easeInOut" }
+                  }}
+                  className="w-24 h-24 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-600/40"
+                >
+                  <Printer size={48} className="text-white" />
+                </motion.div>
+
+                {/* Paper coming out animation */}
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 40, opacity: 1 }}
+                  transition={{ delay: 0.5, duration: 1, repeat: Infinity }}
+                  className="absolute top-full left-1/2 -translate-x-1/2 w-16 bg-white border-x border-b border-slate-200 rounded-b-sm shadow-sm flex flex-col gap-1 p-1 overflow-hidden"
+                >
+                  <div className="h-0.5 w-full bg-slate-100"></div>
+                  <div className="h-0.5 w-full bg-slate-100"></div>
+                  <div className="h-0.5 w-full bg-slate-100"></div>
+                </motion.div>
+              </div>
+
+              <h3 className="text-lg font-black text-slate-800 dark:text-white uppercase tracking-tight mb-2">Generando Ticket</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] animate-pulse">Enviando a impresora...</p>
+
+              <div className="mt-8 flex gap-1 justify-center">
+                <motion.div
+                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1, repeat: Infinity, delay: 0 }}
+                  className="w-1.5 h-1.5 bg-indigo-500 rounded-full"
+                />
+                <motion.div
+                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1, repeat: Infinity, delay: 0.2 }}
+                  className="w-1.5 h-1.5 bg-indigo-500 rounded-full"
+                />
+                <motion.div
+                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1, repeat: Infinity, delay: 0.4 }}
+                  className="w-1.5 h-1.5 bg-indigo-500 rounded-full"
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <PromocionesModal
+        isOpen={showPromociones}
+        onClose={() => setShowPromociones(false)}
+        tiendaId={selectedTiendaId}
+        onSelect={(promo) => {
+          agregarPromoAlCarrito(promo);
+          setShowPromociones(false);
+        }}
+      />
+
+      <CashMovementModal
+        isOpen={showCashMovement.isOpen}
+        onClose={() => setShowCashMovement({ ...showCashMovement, isOpen: false })}
+        type={showCashMovement.type}
+        turnoId={turnoActivo?.id}
+        tiendaId={selectedTiendaId}
+      />
+
+      <PinValidationModal
+        isOpen={showDiscountPinModal}
+        onClose={() => {
+          setShowDiscountPinModal(false);
+          setLocalDiscount(descuentoGlobal || "");
+        }}
+        onSuccess={(authorizedUser) => {
+          setDescuentoGlobal(pendingDiscount);
+          setShowDiscountPinModal(false);
+          toast.success(`Descuento de ${currency}${pendingDiscount} autorizado por ${authorizedUser?.nombre || 'Admin'}`);
+        }}
+        actionName="Aplicar Descuento Especial"
+      />
+
+      {/* PENDING TICKETS CONTROL MODAL (MOVED TO END FOR Z-INDEX RELIABILITY) */}
+      <PendingTicketsModal
+        isOpen={showPendingTickets}
+        onClose={() => setShowPendingTickets(false)}
+        count={pendingTicketsCount}
+        onConfirmConservar={() => {
+          setShowPendingTickets(false);
+          confirmCerrarTurno(pendingMontoFinal);
+        }}
+        onConfirmBorrar={() => {
+          handleClearSuspended();
+          setShowPendingTickets(false);
+          confirmCerrarTurno(pendingMontoFinal);
+        }}
+      />
+    </div>
   );
 };
 

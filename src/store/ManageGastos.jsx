@@ -14,13 +14,16 @@ import {
     Wrench,
     Truck,
     MoreHorizontal,
-    X
+    X,
+    Edit3
 } from "lucide-react";
 import { gastosAPI, dashboardAPI } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import useOfflineOperation from "../hooks/useOfflineOperation";
 import { CURRENCY_SYMBOL } from "../utils/currency";
 import { toast } from "react-hot-toast";
 import Loading from "../Components/Common/Loading";
+import PinValidationModal from "./components/PinValidationModal";
 
 const CATEGORIAS = [
     { id: 'RENTA', label: 'RENTA / ALQUILER', icon: Home, color: 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' },
@@ -40,20 +43,34 @@ export default function ManageGastos() {
     const [loading, setLoading] = useState(true);
     const [tiendas, setTiendas] = useState([]);
 
+    const { execute } = useOfflineOperation('expenses');
+
     // Filtros
-    const [tiendaId, setTiendaId] = useState("");
+    const [tiendaId, setTiendaId] = useState(user?.rol === 'admin' ? "" : (user?.tienda_id || ""));
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
 
+    // Función auxiliar: fecha local correcta (no UTC) para Cancún GMT-5/GMT-6
+    const getLocalDate = () => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
     // Modal nuevo gasto
+    const [editingGasto, setEditingGasto] = useState(null);
     const [showModal, setShowModal] = useState(false);
     const [nuevoGasto, setNuevoGasto] = useState({
         monto: "",
         categoria: "OTRO",
         descripcion: "",
-        fecha: new Date().toISOString().split('T')[0],
+        fecha: getLocalDate(),
         tienda_id: user?.tienda_id || ""
     });
+
+
+    // Validacion PIN
+    const [showPinModal, setShowPinModal] = useState(false);
+    const [pendingAction, setPendingAction] = useState(null);
 
     const loadData = async () => {
         setLoading(true);
@@ -83,12 +100,21 @@ export default function ManageGastos() {
         }
 
         try {
-            await gastosAPI.create({
-                ...nuevoGasto,
-                usuario_id: user?.id
-            });
-            toast.success("Gasto registrado");
+            if (editingGasto) {
+                await execute('update', {
+                    ...nuevoGasto,
+                    usuario_id: user?.id
+                }, editingGasto.id);
+                toast.success("Gasto actualizado");
+            } else {
+                await execute('insert', {
+                    ...nuevoGasto,
+                    usuario_id: user?.id
+                });
+                toast.success("Gasto registrado");
+            }
             setShowModal(false);
+            setEditingGasto(null);
             setNuevoGasto({
                 monto: "",
                 categoria: "OTRO",
@@ -103,14 +129,53 @@ export default function ManageGastos() {
     };
 
     const handleDelete = async (id) => {
+        if (user?.rol !== 'admin') {
+            setPendingAction({ type: 'DELETE', payload: id });
+            setShowPinModal(true);
+            return;
+        }
+        executeDelete(id);
+    };
+
+    const executeDelete = async (id) => {
         if (!confirm("¿Eliminar este registro de gasto?")) return;
         try {
-            await gastosAPI.delete(id);
+            await execute('delete', {}, id);
             toast.success("Gasto eliminado");
             loadData();
         } catch (error) {
             toast.error(error.message);
         }
+    };
+
+    const handleEditClick = (g) => {
+        if (user?.rol !== 'admin') {
+            setPendingAction({ type: 'EDIT', payload: g });
+            setShowPinModal(true);
+            return;
+        }
+        executeEdit(g);
+    };
+
+    const executeEdit = (g) => {
+        setEditingGasto(g);
+        setNuevoGasto({
+            monto: g.monto,
+            categoria: g.categoria,
+            descripcion: g.descripcion || "",
+            fecha: new Date(g.fecha).toISOString().split('T')[0],
+            tienda_id: g.tienda_id || ""
+        });
+        setShowModal(true);
+    };
+
+    const handlePinSuccess = () => {
+        if (pendingAction?.type === 'DELETE') {
+            executeDelete(pendingAction.payload);
+        } else if (pendingAction?.type === 'EDIT') {
+            executeEdit(pendingAction.payload);
+        }
+        setPendingAction(null);
     };
 
     const getCatInfo = (catId) => CATEGORIAS.find(c => c.id === catId) || CATEGORIAS[6];
@@ -167,21 +232,23 @@ export default function ManageGastos() {
 
             {/* Filtros */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                <div className="card-standard p-3">
-                    <label className="label-standard px-2">Sucursal</label>
-                    <div className="flex items-center gap-2 px-2">
-                        <Store size={14} className="text-indigo-500" />
-                        <select
-                            value={tiendaId}
-                            onChange={(e) => setTiendaId(e.target.value)}
-                            className="appearance-none w-full bg-transparent font-bold text-xs cursor-pointer dark:text-white pr-4 focus:outline-none"
-                            style={{ border: 'none', outline: 'none' }}
-                        >
-                            <option value="">Todas las Sedes</option>
-                            {tiendas.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                        </select>
+                {user?.rol === 'admin' && (
+                    <div className="card-standard p-3">
+                        <label className="label-standard px-2">Sucursal</label>
+                        <div className="flex items-center gap-2 px-2">
+                            <Store size={14} className="text-indigo-500" />
+                            <select
+                                value={tiendaId}
+                                onChange={(e) => setTiendaId(e.target.value)}
+                                className="appearance-none w-full bg-transparent font-bold text-xs cursor-pointer dark:text-white pr-4 focus:outline-none"
+                                style={{ border: 'none', outline: 'none' }}
+                            >
+                                <option value="">Todas las Sedes</option>
+                                {tiendas.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                            </select>
+                        </div>
                     </div>
-                </div>
+                )}
                 <div className="card-standard p-3">
                     <label className="label-standard px-2">Desde</label>
                     <div className="flex items-center gap-2 px-2">
@@ -265,12 +332,20 @@ export default function ManageGastos() {
                                                 <p className="text-lg font-black text-rose-600 tracking-tighter">{currency}{parseFloat(g.monto).toFixed(2)}</p>
                                             </td>
                                             <td className="px-8 py-5 text-center">
-                                                <button
-                                                    onClick={() => handleDelete(g.id)}
-                                                    className="p-3 text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all active:scale-90"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
+                                                <div className="flex justify-center gap-2">
+                                                    <button
+                                                        onClick={() => handleEditClick(g)}
+                                                        className="p-3 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl transition-all active:scale-90"
+                                                    >
+                                                        <Edit3 size={16} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDelete(g.id)}
+                                                        className="p-3 text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all active:scale-90"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     );
@@ -295,10 +370,10 @@ export default function ManageGastos() {
                                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1.5">Sincroniza egresos operativos</p>
                                 </div>
                             </div>
-                            <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-rose-500 transition-all"><X size={24} /></button>
+                            <button onClick={() => { setShowModal(false); setEditingGasto(null); }} className="text-slate-400 hover:text-rose-500 transition-all"><X size={24} /></button>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="p-10 space-y-6 bg-white dark:bg-slate-800">
+                        <form onSubmit={handleSubmit} className="p-8 space-y-6 bg-white dark:bg-slate-800">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label className="label-standard">Monto del Egreso *</label>
@@ -307,8 +382,8 @@ export default function ManageGastos() {
                                         <input
                                             type="number"
                                             step="0.01"
-                                            value={nuevoGasto.monto}
-                                            onChange={(e) => setNuevoGasto({ ...nuevoGasto, monto: e.target.value })}
+                                            value={nuevoGasto.monto || ""}
+                                            onChange={(e) => setNuevoGasto({ ...nuevoGasto, monto: e.target.value === "" ? "" : e.target.value })}
                                             required
                                             placeholder="0.00"
                                             className="input-standard pl-12 py-5 text-2xl font-black text-rose-600"
@@ -367,7 +442,7 @@ export default function ManageGastos() {
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setShowModal(false)}
+                                    onClick={() => { setShowModal(false); setEditingGasto(null); }}
                                     className="btn-secondary w-full justify-center"
                                 >
                                     Retroceder
@@ -377,6 +452,14 @@ export default function ManageGastos() {
                     </div>
                 </div>
             )}
+
+            <PinValidationModal 
+                isOpen={showPinModal}
+                onClose={() => { setShowPinModal(false); setPendingAction(null); }}
+                onSuccess={handlePinSuccess}
+                title="Autorización Módulo Gastos"
+                actionType={pendingAction?.type === 'EDIT' ? "M_GASTO_MODIFICAR" : "M_GASTO_ELIMINAR"}
+            />
         </div>
     );
 }

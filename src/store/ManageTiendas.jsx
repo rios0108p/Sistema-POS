@@ -16,6 +16,7 @@ const ManageTiendas = () => {
     const [selectedTienda, setSelectedTienda] = useState(null);
     const [tiendaProductos, setTiendaProductos] = useState([]);
     const [expandedTienda, setExpandedTienda] = useState(null);
+    const [assignmentData, setAssignmentData] = useState({});
 
     const [formData, setFormData] = useState({
         nombre: '',
@@ -507,8 +508,8 @@ const ManageTiendas = () => {
                                                             type="number"
                                                             min="0"
                                                             max={p.cantidad}
-                                                            id={`qty-${p.id}`}
-                                                            defaultValue="0"
+                                                            value={assignmentData[`qty-${p.id}`] || "0"}
+                                                            onChange={(e) => setAssignmentData(prev => ({ ...prev, [`qty-${p.id}`]: e.target.value }))}
                                                             className="input-standard py-2 text-center text-indigo-600 dark:text-indigo-400 font-bold"
                                                         />
                                                     </div>
@@ -517,15 +518,15 @@ const ManageTiendas = () => {
                                                         <input
                                                             type="number"
                                                             min="1"
-                                                            id={`min-${p.id}`}
-                                                            defaultValue="5"
+                                                            value={assignmentData[`min-${p.id}`] || "5"}
+                                                            onChange={(e) => setAssignmentData(prev => ({ ...prev, [`min-${p.id}`]: e.target.value }))}
                                                             className="input-standard py-2 text-center font-bold"
                                                         />
                                                     </div>
                                                     <button
                                                         onClick={() => {
-                                                            const qty = parseInt(document.getElementById(`qty-${p.id}`).value) || 0;
-                                                            const min = parseInt(document.getElementById(`min-${p.id}`).value) || 5;
+                                                            const qty = parseInt(assignmentData[`qty-${p.id}`]) || 0;
+                                                            const min = parseInt(assignmentData[`min-${p.id}`]) || 5;
 
                                                             if (qty > 0 && qty > p.cantidad) {
                                                                 toast.error("No hay suficiente stock global");

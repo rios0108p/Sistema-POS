@@ -1,13 +1,16 @@
 {
   "name": "sistema-pos",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.7",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "vite build && electron-builder"
   },
   "author": "Antigravity",
   "description": "Sistema POS Profesional Portable",
@@ -25,6 +28,7 @@
     "express": "^4.18.2",
     "file-saver": "^2.0.5",
     "firebase": "^12.3.0",
+    "framer-motion": "^12.36.0",
     "html2canvas": "^1.4.1",
     "idb-keyval": "^6.2.2",
     "jsonwebtoken": "^9.0.3",
@@ -43,6 +47,7 @@
     "react-router-dom": "^7.9.1",
     "react-window": "^2.2.6",
     "recharts": "^3.7.0",
+    "ssh2-sftp-client": "^12.0.1",
     "tailwindcss": "^4.1.13",
     "xlsx": "^0.18.5"
   },
@@ -51,11 +56,63 @@
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "electron": "^41.0.2",
+    "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
     "eslint": "^9.35.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.4.0",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
     "vite": "^7.1.6",
-    "vite-plugin-pwa": "^1.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "wait-on": "^9.0.4"
+  },
+  "build": {
+    "appId": "com.tendo.pos.professional",
+    "productName": "TENDO-POS Professional",
+    "copyright": "Copyright © 2026 TENDO",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist_electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "src/services/db/**/*",
+      "src/services/sync/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        "zip"
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TENDO-POS"
+    },
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "buildDependenciesFromSource": false,
+    "npmRebuild": true
   }
 }

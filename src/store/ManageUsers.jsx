@@ -1,23 +1,39 @@
 import { useState, useEffect } from "react";
-import { UserPlus, Shield, UserPen, Trash2, Key, Users, Store, Clock } from "lucide-react";
+import { UserPlus, Shield, UserPen, Trash2, Key, Users, Store, Clock, Plus, Check, Search } from "lucide-react";
 import { usuariosAPI, tiendasAPI } from "../services/api";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
 
 export default function ManageUsers() {
-    const { user: currentUser } = useAuth();
+    const { user: currentUser, updateUser } = useAuth();
     const [usuarios, setUsuarios] = useState([]);
     const [tiendas, setTiendas] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
+    const [searchTerm, setSearchTerm] = useState("");
+    const DEFAULT_PERMISSIONS = {
+        ventas: true,
+        inventario: false,
+        clientes: false,
+        compras: false,
+        gastos: false,
+        tiendas: false,
+        usuarios: false,
+        configuracion: false,
+        dashboard: false,
+        imprimir_corte: true,
+        hacer_corte: true
+    };
+
     const [formData, setFormData] = useState({
         nombre_usuario: "",
         password: "",
         rol: "vendedor",
         tienda_id: "",
         turno_trabajo: "COMPLETO",
-        pin_seguridad: ""
+        pin_seguridad: "",
+        permisos: { ...DEFAULT_PERMISSIONS }
     });
 
     useEffect(() => {
@@ -48,13 +64,19 @@ export default function ManageUsers() {
     const handleOpenModal = (usuario = null) => {
         if (usuario) {
             setEditingUser(usuario);
+            const userPerms = typeof usuario.permisos === 'string' ? JSON.parse(usuario.permisos) : (usuario.permisos || {});
+
             setFormData({
                 nombre_usuario: usuario.nombre_usuario,
                 password: "",
                 rol: usuario.rol,
                 tienda_id: usuario.tienda_id || "",
                 turno_trabajo: usuario.turno_trabajo || "COMPLETO",
-                pin_seguridad: "" // No mostramos el PIN hasheado
+                pin_seguridad: "", // No mostramos el PIN hasheado
+                permisos: {
+                    ...DEFAULT_PERMISSIONS,
+                    ...userPerms // Las guardadas en DB mandan, aunque sean false
+                }
             });
         } else {
             setEditingUser(null);
@@ -64,7 +86,8 @@ export default function ManageUsers() {
                 rol: "vendedor",
                 tienda_id: "",
                 turno_trabajo: "COMPLETO",
-                pin_seguridad: ""
+                pin_seguridad: "",
+                permisos: { ...DEFAULT_PERMISSIONS }
             });
         }
         setIsModalOpen(true);
@@ -72,9 +95,17 @@ export default function ManageUsers() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        // Bug #18: Prevent admin from demoting themselves
+        if (editingUser?.id === currentUser.id && formData.rol !== currentUser.rol) {
+            return toast.error("No puedes cambiar tu propio rol. Pide a otro administrador que lo haga.");
+        }
         try {
             if (editingUser) {
                 await usuariosAPI.update(editingUser.id, formData);
+                // Si el admin está editandose a sí mismo, actualizamos su propio contexto global
+                if (editingUser.id === currentUser.id) {
+                    updateUser(formData);
+                }
                 toast.success("Usuario actualizado");
             } else {
                 if (!formData.password) return toast.error("La contraseña es obligatoria");
@@ -111,13 +142,25 @@ export default function ManageUsers() {
                     </h1>
                     <p className="text-xs sm:text-sm text-slate-400 mt-1 font-medium">Control de acceso y perfiles de usuario por sucursal</p>
                 </div>
-                <button
-                    onClick={() => handleOpenModal()}
-                    className="btn-primary flex items-center gap-2 text-[10px]"
-                >
-                    <UserPlus size={18} />
-                    Añadir Trabajador
-                </button>
+                <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                    <div className="relative group">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                        <input
+                            type="text"
+                            placeholder="Buscar trabajador..."
+                            className="input-standard pl-12 h-[44px] text-sm"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    <button
+                        onClick={() => handleOpenModal()}
+                        className="btn-primary flex items-center gap-2 text-[10px]"
+                    >
+                        <UserPlus size={18} />
+                        Añadir Trabajador
+                    </button>
+                </div>
             </div>
 
             <div className="card-standard overflow-hidden p-0">
@@ -143,7 +186,10 @@ export default function ManageUsers() {
                                         </div>
                                     </td>
                                 </tr>
-                            ) : usuarios.map((u) => (
+                            ) : usuarios.filter(u =>
+                                    u.nombre_usuario.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                    (u.tienda_nombre || '').toLowerCase().includes(searchTerm.toLowerCase())
+                                ).map((u) => (
                                 <tr key={u.id} className="table-row">
                                     <td className="table-cell font-bold text-slate-800 dark:text-white uppercase tracking-tighter text-sm px-8 py-5">{u.nombre_usuario}</td>
                                     <td className="table-cell px-8 py-5">
@@ -176,12 +222,14 @@ export default function ManageUsers() {
                                         >
                                             <UserPen size={18} />
                                         </button>
-                                        <button
-                                            onClick={() => handleDelete(u.id)}
-                                            className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-all shadow-lg active:scale-90 border border-transparent hover:border-rose-100 dark:hover:border-rose-800/50"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
+                                        {u.nombre_usuario !== 'admin@sistema.com' && (
+                                            <button
+                                                onClick={() => handleDelete(u.id)}
+                                                className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-white dark:hover:bg-slate-700 rounded-xl transition-all shadow-lg active:scale-90 border border-transparent hover:border-rose-100 dark:hover:border-rose-800/50"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -234,9 +282,9 @@ export default function ManageUsers() {
                                             type="password"
                                             maxLength={4}
                                             className="input-standard pl-14 font-bold"
-                                            value={formData.pin_seguridad}
+                                            value={formData.pin_seguridad || ""}
                                             onChange={e => {
-                                                const val = e.target.value.replace(/\D/g, '');
+                                                const val = e.target.value === "" ? "" : e.target.value.replace(/\D/g, '');
                                                 if (val.length <= 4) setFormData({ ...formData, pin_seguridad: val });
                                             }}
                                             placeholder="Ej: 1234"
@@ -247,8 +295,9 @@ export default function ManageUsers() {
                                     <div className="col-span-2">
                                         <label className="label-standard">Rol Operativo</label>
                                         <select
-                                            className="select-standard font-bold uppercase text-xs tracking-widest cursor-pointer"
+                                            className="select-standard font-bold uppercase text-xs tracking-widest cursor-pointer disabled:opacity-50"
                                             value={formData.rol}
+                                            disabled={editingUser?.nombre_usuario === 'admin@sistema.com'}
                                             onChange={e => setFormData({ ...formData, rol: e.target.value })}
                                         >
                                             <option value="vendedor">Vendedor / POS</option>
@@ -279,6 +328,34 @@ export default function ManageUsers() {
                                             <option value="MAÑANA">Mañana</option>
                                             <option value="TARDE">Tarde</option>
                                         </select>
+                                    </div>
+                                    <div className="col-span-2 pt-4 border-t dark:border-slate-700/50">
+                                        <label className="label-standard mb-4 flex items-center gap-2">
+                                            <Shield size={14} className="text-indigo-500" />
+                                            Permisos de Acceso Específicos
+                                        </label>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                            {Object.keys(formData.permisos).map((perm) => (
+                                                <div
+                                                    key={perm}
+                                                    onClick={() => setFormData({
+                                                        ...formData,
+                                                        permisos: { ...formData.permisos, [perm]: !formData.permisos[perm] }
+                                                    })}
+                                                    className={`
+                                                        flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all active:scale-95 select-none
+                                                        ${formData.permisos[perm]
+                                                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-900/30 dark:border-indigo-800 dark:text-indigo-400'
+                                                            : 'bg-slate-50 border-slate-200 text-slate-400 dark:bg-slate-900/50 dark:border-slate-800'}
+                                                    `}
+                                                >
+                                                    <div className={`w-5 h-5 rounded-lg border flex-shrink-0 flex items-center justify-center transition-all ${formData.permisos[perm] ? 'bg-indigo-600 border-indigo-600' : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600'}`}>
+                                                        {formData.permisos[perm] && <Check size={12} className="text-white" />}
+                                                    </div>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest truncate">{perm}</span>
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="pt-8 flex flex-col gap-3">

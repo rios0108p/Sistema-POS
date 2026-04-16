@@ -3,6 +3,25 @@ import db from '../config/db.js';
 
 const router = express.Router();
 
+// Auto-migración (Añadir columnas si no existen)
+const migrate = async () => {
+    try {
+        // Verificar si la tabla existe primero
+        const [tables] = await db.query("SHOW TABLES LIKE 'pedidos'");
+        if (tables.length === 0) return;
+
+        const [columns] = await db.query('SHOW COLUMNS FROM pedidos');
+        const hasFecha = columns.some(c => c.Field === 'fecha_programada');
+        if (!hasFecha) {
+            await db.query('ALTER TABLE pedidos ADD COLUMN fecha_programada DATE NULL AFTER notas');
+            console.log('✅ Columna fecha_programada añadida a pedidos');
+        }
+    } catch (err) {
+        console.error('Error migrando pedidos:', err);
+    }
+};
+migrate();
+
 // Obtener todos los pedidos (Solicitudes)
 router.get('/', async (req, res) => {
     try {
@@ -15,10 +34,22 @@ router.get('/', async (req, res) => {
 
         let query = 'SELECT p.*, t.nombre as tienda_nombre FROM pedidos p LEFT JOIN tiendas t ON p.tienda_id = t.id';
         const params = [];
+        const { show_all } = req.query;
+
+        let whereClauses = [];
 
         if (tienda_id) {
-            query += ' WHERE p.tienda_id = ?';
+            whereClauses.push('p.tienda_id = ?');
             params.push(tienda_id);
+        }
+
+        // Si no se pide ver todos, ocultar los programados para el futuro
+        if (show_all !== 'true') {
+            whereClauses.push('(p.fecha_programada IS NULL OR p.fecha_programada <= CURDATE())');
+        }
+
+        if (whereClauses.length > 0) {
+            query += ' WHERE ' + whereClauses.join(' AND ');
         }
 
         query += ' ORDER BY p.created_at DESC';
@@ -72,7 +103,7 @@ router.post('/', async (req, res) => {
 
         const {
             tienda_id, usuario_solicitante_id, nombre_cliente, email_cliente, telefono_cliente,
-            direccion_envio, subtotal, envio, total, metodo_pago, notas, productos
+            direccion_envio, subtotal, envio, total, metodo_pago, notas, productos, fecha_programada
         } = req.body;
 
         if ((!nombre_cliente && !tienda_id) || !productos || productos.length === 0) {
@@ -82,10 +113,10 @@ router.post('/', async (req, res) => {
         // Crear pedido / solicitud
         const [pedidoResult] = await connection.query(
             `INSERT INTO pedidos 
-       (tienda_id, usuario_solicitante_id, nombre_cliente, email_cliente, telefono_cliente, direccion_envio, subtotal, envio, total, metodo_pago, notas, estado) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tienda_id, usuario_solicitante_id, nombre_cliente, email_cliente, telefono_cliente, direccion_envio, subtotal, envio, total, metodo_pago, notas, estado, fecha_programada) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [tienda_id || null, usuario_solicitante_id || null, nombre_cliente || 'SUMINISTRO INTERNO', email_cliente || null,
-            telefono_cliente || null, direccion_envio || null, subtotal, envio || 0, total, metodo_pago || 'SOLICITUD', notas || null, 'PENDIENTE']
+            telefono_cliente || null, direccion_envio || null, subtotal, envio || 0, total, metodo_pago || 'SOLICITUD', notas || null, 'PENDIENTE', fecha_programada || null]
         );
 
         const pedidoId = pedidoResult.insertId;

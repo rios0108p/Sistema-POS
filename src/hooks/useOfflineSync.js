@@ -6,12 +6,14 @@ import { toast } from 'react-hot-toast';
 const OFFLINE_SALES_KEY = 'ventas_offline_queue';
 
 export const useOfflineSync = () => {
-    const [isOnline, setIsOnline] = useState(navigator.onLine);
+    console.log("DEBUG: useOfflineSync Hook V1.0.7");
+    const [isOnline, setIsOnline] = useState(typeof window !== 'undefined' ? navigator.onLine : true);
     const [pendingSales, setPendingSales] = useState([]);
     const [isSyncing, setIsSyncing] = useState(false);
 
     // Monitor Network Status
     useEffect(() => {
+        if (typeof window === 'undefined') return;
         const handleOnline = () => {
             setIsOnline(true);
             toast.success("Conexión restaurada. Sincronizando...");

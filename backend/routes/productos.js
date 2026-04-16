@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import db from '../config/db.js';
+import { checkTienda } from '../middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,69 +41,106 @@ const upload = multer({
     }
 });
 
-// Obtener todos los productos
+// Buscar producto (por código o nombre) para el verificador y POS
+router.get('/buscar', checkTienda, async (req, res) => {
+    try {
+        const { q, tienda_id } = req.query;
+        if (!q) return res.json([]);
+
+        let queryParams = [`%${q}%`, q, q];
+        let sql = `
+            SELECT p.*, c.nombre as categoria_nombre,
+            (SELECT SUM(cantidad) FROM inventario_tienda WHERE producto_id = p.id) as total_stock
+            FROM productos p
+            LEFT JOIN categorias c ON p.categoria = c.nombre
+            WHERE p.activo = 1 
+            AND (p.nombre LIKE ? OR p.codigo_barras = ? OR p.id IN (SELECT producto_id FROM producto_barcodes WHERE codigo_barras = ?))
+        `;
+
+        if (tienda_id) {
+            sql = `
+                SELECT p.*, c.nombre as categoria_nombre,
+                COALESCE(it.cantidad, 0) as stock_sucursal,
+                (SELECT SUM(cantidad) FROM inventario_tienda WHERE producto_id = p.id) as total_stock
+                FROM productos p
+                LEFT JOIN categorias c ON p.categoria = c.nombre
+                LEFT JOIN inventario_tienda it ON p.id = it.producto_id AND it.tienda_id = ?
+                WHERE p.activo = 1 
+                AND (p.nombre LIKE ? OR p.codigo_barras = ? OR p.id IN (SELECT producto_id FROM producto_barcodes WHERE codigo_barras = ?))
+            `;
+            queryParams = [tienda_id, `%${q}%`, q, q];
+        }
+
+        const [rows] = await db.query(sql, queryParams);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error en búsqueda de productos:', error);
+        res.status(500).json({ error: 'Error en el servidor al buscar productos' });
+    }
+});
+
+// Obtener todos los productos (CON PAGINACIÓN)
 router.get('/', async (req, res) => {
     try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = (page - 1) * limit;
 
+        // 1. Obtener total de productos para la paginación
+        const [totalRows] = await db.query('SELECT COUNT(*) as total FROM productos WHERE activo = 1');
+        const total = totalRows[0].total;
+
+        // 2. Obtener los productos de la página actual
+        // Optimizamos: cantidad_global se calcula con una subconsulta limitada solo a esta página
         const [rows] = await db.query(`
             SELECT p.*, 
-                   (p.cantidad + COALESCE((SELECT SUM(it.cantidad) FROM inventario_tienda it WHERE it.producto_id = p.id), 0)) as cantidad_global
+                   (p.cantidad + COALESCE((SELECT SUM(it.cantidad) FROM inventario_tienda it WHERE it.producto_id = p.id), 0)) as cantidad_global,
+                   c.nombre as categoria_nombre
             FROM productos p 
+            LEFT JOIN categorias c ON p.categoria = c.nombre
+            WHERE p.activo = 1
             ORDER BY p.id DESC
-        `);
+            LIMIT ? OFFSET ?
+        `, [limit, offset]);
 
-        // Obtener variaciones de todos los productos
-        const [variationRows] = await db.query('SELECT * FROM variaciones');
+        if (rows.length === 0) {
+            return res.json({
+                data: [],
+                pagination: { total, page, limit, pages: Math.ceil(total / limit) }
+            });
+        }
+
+        const productIds = rows.map(p => p.id);
+
+        // 3. Obtener variaciones SOLO de los productos de esta página
+        const [variationRows] = await db.query('SELECT * FROM variaciones WHERE producto_id IN (?)', [productIds]);
         const variationsByProduct = variationRows.reduce((acc, v) => {
             if (!acc[v.producto_id]) acc[v.producto_id] = [];
             acc[v.producto_id].push(v);
             return acc;
         }, {});
 
-        // Obtener códigos de barras agrupados
-        const [barcodeRows] = await db.query('SELECT * FROM producto_barcodes');
+        // 4. Obtener códigos de barras agrupados SOLO de los productos de esta página
+        const [barcodeRows] = await db.query('SELECT * FROM producto_barcodes WHERE producto_id IN (?)', [productIds]);
         const barcodesByProduct = barcodeRows.reduce((acc, b) => {
             if (!acc[b.producto_id]) acc[b.producto_id] = [];
             acc[b.producto_id].push(b.codigo_barras);
             return acc;
         }, {});
 
+        // 5. Mapear y parsear campos JSON de forma segura
         const productos = rows.map(p => {
-            let imagenes = [];
-            let caracteristicas = [];
-
-            // Parsear imagenes de forma segura
-            if (p.imagenes) {
-                if (typeof p.imagenes === 'string') {
-                    try {
-                        imagenes = JSON.parse(p.imagenes);
-                    } catch (e) {
-                        console.error('Error parsing imagenes for product', p.id, e);
-                        imagenes = [];
-                    }
-                } else if (Array.isArray(p.imagenes)) {
-                    imagenes = p.imagenes;
-                }
-            }
-
-            // Parsear caracteristicas de forma segura
-            if (p.caracteristicas) {
-                if (typeof p.caracteristicas === 'string') {
-                    try {
-                        caracteristicas = JSON.parse(p.caracteristicas);
-                    } catch (e) {
-                        console.error('Error parsing caracteristicas for product', p.id, e);
-                        caracteristicas = [];
-                    }
-                } else if (Array.isArray(p.caracteristicas)) {
-                    caracteristicas = p.caracteristicas;
-                }
-            }
+            const parseJson = (field, fallback = []) => {
+                if (!field) return fallback;
+                if (typeof field !== 'string') return Array.isArray(field) ? field : fallback;
+                try { return JSON.parse(field); } catch (e) { return fallback; }
+            };
 
             return {
                 ...p,
-                caracteristicas,
-                imagenes,
+                caracteristicas: parseJson(p.caracteristicas),
+                impuestos: parseJson(p.impuestos),
+                imagenes: parseJson(p.imagenes),
                 variaciones: variationsByProduct[p.id] || [],
                 barcodes_agrupados: barcodesByProduct[p.id] || [],
                 oferta: Boolean(p.oferta),
@@ -111,9 +149,17 @@ router.get('/', async (req, res) => {
             };
         });
 
-        res.json(productos);
+        res.json({
+            data: productos,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            }
+        });
     } catch (error) {
-        console.error('Error al obtener productos:', error);
+        console.error('Error al obtener productos paginados:', error);
         res.status(500).json({ error: 'Error al obtener productos' });
     }
 });
@@ -161,10 +207,18 @@ router.get('/:id', async (req, res) => {
                 caracteristicas = p.caracteristicas;
             }
         }
+        // Parsear impuestos de forma segura
+        let impuestos = [];
+        if (p.impuestos) {
+            if (typeof p.impuestos === 'string') {
+                try { impuestos = JSON.parse(p.impuestos); } catch (e) { impuestos = []; }
+            } else if (Array.isArray(p.impuestos)) { impuestos = p.impuestos; }
+        }
 
         const producto = {
             ...p,
             caracteristicas,
+            impuestos,
             imagenes,
             variaciones: variationRows || [],
             barcodes_agrupados: barcodeRows.map(b => b.codigo_barras) || [],
@@ -238,6 +292,9 @@ router.post('/importar', async (req, res) => {
         }
 
         await connection.commit();
+        if (procesados === 0 && errores.length > 0) {
+            return res.status(400).json({ error: 'Fallo total en la importación. Primer error: ' + errores[0], errores });
+        }
         res.json({
             message: `Proceso completado. ${procesados} productos importados al almacén central.`,
             procesados,
@@ -258,7 +315,7 @@ router.post('/', upload.array('imagenes', 4), async (req, res) => {
         const {
             nombre, descripcion, precio_compra, precio_venta, precio_oferta,
             categoria, cantidad, stock_minimo, marca, color, proveedor_id, codigo_barras, caracteristicas,
-            oferta, destacado, es_nuevo, variaciones, barcodes_agrupados, activo
+            oferta, destacado, es_nuevo, variaciones, barcodes_agrupados, activo, impuestos
         } = req.body;
 
         // Validaciones
@@ -269,21 +326,32 @@ router.post('/', upload.array('imagenes', 4), async (req, res) => {
         // Procesar imágenes
         const imagenes = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
 
-        // Parsear características y variaciones
+        // Parsear JSONs con try-catch para evitar crashes por caché
         let caracteristicasArray = [];
         if (caracteristicas) {
-            caracteristicasArray = typeof caracteristicas === 'string' ? JSON.parse(caracteristicas) : caracteristicas;
+            try {
+                caracteristicasArray = typeof caracteristicas === 'string' ? (caracteristicas === '[object Object]' ? [] : JSON.parse(caracteristicas)) : caracteristicas;
+            } catch (e) { caracteristicasArray = []; }
+        }
+
+        let impuestosArray = [];
+        if (impuestos) {
+            try {
+                impuestosArray = typeof impuestos === 'string' ? (impuestos === '[object Object]' ? [] : JSON.parse(impuestos)) : impuestos;
+            } catch (e) { impuestosArray = []; }
         }
 
         let variacionesArray = [];
         if (variaciones) {
-            variacionesArray = typeof variaciones === 'string' ? JSON.parse(variaciones) : variaciones;
+            try {
+                variacionesArray = typeof variaciones === 'string' ? (variaciones === '[object Object]' ? [] : JSON.parse(variaciones)) : variaciones;
+            } catch (e) { variacionesArray = []; }
         }
         const [result] = await db.query(
             `INSERT INTO productos 
       (nombre, descripcion, precio_compra, precio_venta, precio_oferta, categoria, cantidad, stock_minimo,
-       marca, color, proveedor_id, codigo_barras, caracteristicas, imagenes, estrellas, oferta, destacado, es_nuevo, activo) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       marca, color, proveedor_id, codigo_barras, caracteristicas, impuestos, imagenes, estrellas, oferta, destacado, es_nuevo, activo) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 nombre, descripcion || '',
                 parseFloat(precio_compra), parseFloat(precio_venta),
@@ -293,6 +361,7 @@ router.post('/', upload.array('imagenes', 4), async (req, res) => {
                 proveedor_id ? parseInt(proveedor_id) : null,
                 codigo_barras || null,
                 JSON.stringify(caracteristicasArray),
+                JSON.stringify(impuestosArray),
                 JSON.stringify(imagenes),
                 0,
                 oferta === 'true' || oferta === true,
@@ -346,7 +415,7 @@ router.put('/:id', upload.array('imagenes', 4), async (req, res) => {
         const { id } = req.params;
         let { nombre, descripcion, precio_compra, precio_venta, precio_oferta,
             categoria, cantidad, stock_minimo, marca, color, proveedor_id, codigo_barras, caracteristicas,
-            oferta, destacado, es_nuevo, imagenes_existentes, variaciones, barcodes_agrupados, activo } = req.body;
+            oferta, destacado, es_nuevo, imagenes_existentes, variaciones, barcodes_agrupados, activo, impuestos } = req.body;
 
         // Obtener producto actual
         const [currentRows] = await db.query('SELECT * FROM productos WHERE id = ?', [id]);
@@ -374,6 +443,7 @@ router.put('/:id', upload.array('imagenes', 4), async (req, res) => {
         }
 
         let caracteristicasArray = parseJsonField(caracteristicas);
+        let impuestosArray = parseJsonField(impuestos);
         let variacionesArray = parseJsonField(variaciones);
         let barcodesArray = parseJsonField(barcodes_agrupados);
 
@@ -400,7 +470,7 @@ router.put('/:id', upload.array('imagenes', 4), async (req, res) => {
         await db.query(`UPDATE productos SET 
             nombre = ?, descripcion = ?, precio_compra = ?, precio_venta = ?, precio_oferta = ?, 
             categoria = ?, cantidad = ?, stock_minimo = ?, marca = ?, color = ?, proveedor_id = ?, codigo_barras = ?, 
-            caracteristicas = ?, imagenes = ?, oferta = ?, destacado = ?, es_nuevo = ?, activo = ?
+            caracteristicas = ?, impuestos = ?, imagenes = ?, oferta = ?, destacado = ?, es_nuevo = ?, activo = ?
             WHERE id = ?`,
             [
                 finalValues.nombre, finalValues.descripcion || '',
@@ -411,6 +481,7 @@ router.put('/:id', upload.array('imagenes', 4), async (req, res) => {
                 finalValues.proveedor_id,
                 finalValues.codigo_barras,
                 JSON.stringify(caracteristicasArray),
+                JSON.stringify(impuestosArray),
                 JSON.stringify(imagenes),
                 finalValues.oferta,
                 finalValues.destacado,
@@ -499,6 +570,134 @@ router.delete('/:id', async (req, res) => {
     } catch (error) {
         console.error('Error al eliminar producto:', error);
         res.status(500).json({ error: 'Error al eliminar producto' });
+    }
+});
+
+// Vaciar inventario completo
+router.delete('/bulk-delete/all', async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // Eliminar en orden para respetar FKs si existen
+        await connection.query('DELETE FROM inventario_tienda');
+        await connection.query('DELETE FROM producto_barcodes');
+        await connection.query('DELETE FROM variaciones');
+        await connection.query('DELETE FROM productos');
+
+        await connection.commit();
+        res.json({ message: 'Inventario vaciado completamente' });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Error al vaciar inventario:', error);
+        res.status(500).json({ error: 'Error al vaciar inventario', details: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+// Importar catálogo desde Eleventa
+router.post('/importar-eleventa', async (req, res) => {
+    try {
+        const { items, tienda_id } = req.body;
+        if (!items || !Array.isArray(items)) {
+            return res.status(400).json({ error: 'Formato de datos inválido' });
+        }
+
+        let procesados = 0;
+        let errores = [];
+
+        for (const item of items) {
+            try {
+                // Mapeo esperado
+                const codigo = item.codigo_barras || null;
+                const nombre = item.nombre || 'Sin nombre';
+                const p_compra = parseFloat(item.precio_compra) || 0;
+                const p_venta = parseFloat(item.precio_venta) || 0;
+                const p_oferta = item.precio_oferta ? parseFloat(item.precio_oferta) : null;
+                const cantidad = parseInt(item.cantidad) || 0;
+                const s_minimo = parseInt(item.stock_minimo) || 5;
+                const categoria = item.categoria || 'General';
+
+                // 1. Validar y crear categoría si no existe
+                let [catRows] = await db.query('SELECT id FROM categorias WHERE nombre = ?', [categoria]);
+                if (catRows.length === 0) {
+                    await db.query('INSERT IGNORE INTO categorias (nombre) VALUES (?)', [categoria]);
+                }
+
+                // 2. Buscar si el producto existe por codigo_barras o nombre
+                let productoId = null;
+                let existe = false;
+
+                if (codigo) {
+                    const [prodRows] = await db.query('SELECT id FROM productos WHERE codigo_barras = ?', [codigo]);
+                    if (prodRows.length > 0) {
+                        productoId = prodRows[0].id;
+                        existe = true;
+                    } else {
+                        const [bg] = await db.query('SELECT producto_id FROM producto_barcodes WHERE codigo_barras = ?', [codigo]);
+                        if (bg.length > 0) {
+                            productoId = bg[0].producto_id;
+                            existe = true;
+                        }
+                    }
+                }
+                if (!existe && nombre) {
+                    const [prodRows] = await db.query('SELECT id FROM productos WHERE nombre = ?', [nombre]);
+                    if (prodRows.length > 0) {
+                        productoId = prodRows[0].id;
+                        existe = true;
+                    }
+                }
+
+                if (existe && productoId) {
+                    // Actualizar
+                    await db.query(`
+                        UPDATE productos 
+                        SET nombre = ?, precio_compra = ?, precio_venta = ?, precio_oferta = ?, 
+                            categoria = ?, cantidad = ?, stock_minimo = ?, oferta = ?
+                        WHERE id = ?
+                    `, [
+                        nombre, p_compra, p_venta, p_oferta, categoria, cantidad, s_minimo,
+                        p_oferta ? 1 : 0, productoId
+                    ]);
+                } else {
+                    // Insertar
+                    const [insertResult] = await db.query(`
+                        INSERT INTO productos 
+                        (nombre, precio_compra, precio_venta, precio_oferta, categoria, cantidad, stock_minimo, codigo_barras, oferta, activo) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    `, [
+                        nombre, p_compra, p_venta, p_oferta, categoria, cantidad, s_minimo, codigo,
+                        p_oferta ? 1 : 0
+                    ]);
+                    productoId = insertResult.insertId;
+                }
+
+                // Si se proporcionó un tienda_id, actualizar inventario de la tienda
+                if (tienda_id && productoId) {
+                    const [invRows] = await db.query('SELECT id FROM inventario_tienda WHERE tienda_id = ? AND producto_id = ?', [tienda_id, productoId]);
+                    if (invRows.length > 0) {
+                        await db.query('UPDATE inventario_tienda SET cantidad = ?, stock_minimo = ?, activo = 1 WHERE id = ?', [cantidad, s_minimo, invRows[0].id]);
+                    } else {
+                        await db.query('INSERT INTO inventario_tienda (tienda_id, producto_id, cantidad, stock_minimo, activo) VALUES (?, ?, ?, ?, 1)', [tienda_id, productoId, cantidad, s_minimo]);
+                    }
+                }
+
+                procesados++;
+            } catch (err) {
+                console.error('Error importando item Eleventa:', item, err);
+                errores.push(err.message);
+            }
+        }
+
+        if (procesados === 0 && errores.length > 0) {
+            return res.status(400).json({ error: 'Fallo total en importación. Primer error: ' + errores[0] });
+        }
+        res.json({ message: `Importación finalizada. Procesados: ${procesados}. Errores: ${errores.length}` });
+    } catch (error) {
+        console.error('Error en importación Eleventa:', error);
+        res.status(500).json({ error: 'Error en la importación', details: error.message });
     }
 });
 

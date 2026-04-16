@@ -8,7 +8,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
     try {
         const [rows] = await db.query(`
-            SELECT u.id, u.nombre_usuario, u.rol, u.tienda_id, u.turno_trabajo, u.created_at, u.pin_seguridad,
+            SELECT u.id, u.nombre_usuario, u.rol, u.tienda_id, u.turno_trabajo, u.created_at, u.pin_seguridad, u.permisos,
                    t.nombre as tienda_nombre
             FROM usuarios u
             LEFT JOIN tiendas t ON u.tienda_id = t.id
@@ -41,8 +41,8 @@ router.post('/', async (req, res) => {
         }
 
         const [result] = await db.query(
-            'INSERT INTO usuarios (nombre_usuario, password, rol, tienda_id, turno_trabajo, pin_seguridad, email) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [nombre_usuario, hashedPassword, rol || 'vendedor', tienda_id || null, turno_trabajo || 'COMPLETO', hashedPin, req.body.email || null]
+            'INSERT INTO usuarios (nombre_usuario, password, rol, tienda_id, turno_trabajo, pin_seguridad, email, permisos) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [nombre_usuario, hashedPassword, rol || 'vendedor', tienda_id || null, turno_trabajo || 'COMPLETO', hashedPin, req.body.email || null, JSON.stringify(req.body.permisos || null)]
         );
 
         res.status(201).json({
@@ -62,7 +62,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre_usuario, password, rol, tienda_id, turno_trabajo, pin_seguridad } = req.body;
+        const { nombre_usuario, password, rol, tienda_id, turno_trabajo, pin_seguridad, permisos } = req.body;
 
         const updates = [];
         const params = [];
@@ -70,14 +70,25 @@ router.put('/:id', async (req, res) => {
         updates.push('nombre_usuario = ?');
         params.push(nombre_usuario);
 
-        updates.push('rol = ?');
-        params.push(rol);
+        // Proteccion: No permitir cambiar el rol del administrador principal
+        if (id == 1 || nombre_usuario === 'admin@sistema.com') {
+            updates.push('rol = ?');
+            params.push('admin');
+        } else {
+            updates.push('rol = ?');
+            params.push(rol);
+        }
 
         updates.push('tienda_id = ?');
         params.push(tienda_id || null);
 
         updates.push('turno_trabajo = ?');
         params.push(turno_trabajo || 'COMPLETO');
+
+        if (permisos !== undefined) {
+            updates.push('permisos = ?');
+            params.push(JSON.stringify(permisos));
+        }
 
         if (password && password.trim() !== '') {
             const salt = await bcrypt.genSalt(10);
@@ -110,8 +121,11 @@ router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Evitar que el admin se borre a sí mismo si fuera necesario, 
-        // pero lo dejaremos simple por ahora o lo validamos en el front
+        // Proteccion: No permitir borrar el administrador principal (ID 1 o nombre_usuario reservado)
+        const [userCheck] = await db.query('SELECT nombre_usuario FROM usuarios WHERE id = ?', [id]);
+        if (userCheck.length > 0 && userCheck[0].nombre_usuario === 'admin@sistema.com') {
+            return res.status(403).json({ error: 'No se puede eliminar el administrador principal del sistema' });
+        }
 
         await db.query('DELETE FROM usuarios WHERE id = ?', [id]);
         res.json({ message: 'Usuario eliminado exitosamente' });

@@ -9,22 +9,31 @@ import {
 } from "lucide-react";
 import { CURRENCY_SYMBOL } from "../utils/currency";
 import { useAuth } from "../context/AuthContext";
+import { printCorteTicket } from "../utils/printUtils";
 import Loading from "../Components/Common/Loading";
 
+
 const CorteCaja = () => {
-    const { user } = useAuth();
+    const { user, storeConfig, hasPermission } = useAuth();
     const isAdmin = user?.rol?.toLowerCase() === 'admin';
     const [turnos, setTurnos] = useState([]);
     const [turnoDetalle, setTurnoDetalle] = useState(null);
     const [loading, setLoading] = useState(true);
     const [expandedTurno, setExpandedTurno] = useState(null);
-    const [timeRange, setTimeRange] = useState("day");
+
+    const getLocalDate = () => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    const [selectedDate, setSelectedDate] = useState(getLocalDate());
+    const [selectedRange, setSelectedRange] = useState('day'); // day, week, month, custom
     const [selectedTienda, setSelectedTienda] = useState("");
     const [stores, setStores] = useState([]);
 
     useEffect(() => {
         loadTurnos();
-    }, [timeRange, selectedTienda]);
+    }, [selectedDate, selectedTienda, selectedRange]);
 
     useEffect(() => {
         if (isAdmin) {
@@ -35,7 +44,9 @@ const CorteCaja = () => {
     const loadTurnos = async () => {
         try {
             setLoading(true);
-            const data = await turnosAPI.getAll(timeRange, selectedTienda);
+            // Si no es admin, filtrar por el usuario actual
+            const usuarioId = isAdmin ? "" : (user?.id || "");
+            const data = await turnosAPI.getAll(selectedRange, selectedTienda, selectedDate, selectedDate, usuarioId);
             setTurnos(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error("Error loading turnos:", error);
@@ -77,9 +88,35 @@ const CorteCaja = () => {
         });
     };
 
-    const turnosCerrados = turnos.filter(t => t.estado === 'CERRADO');
-    const totalVentas = turnosCerrados.reduce((sum, t) => sum + Number(t.total_monto || 0), 0);
-    const totalDiferencias = turnosCerrados.reduce((sum, t) => sum + Number(t.diferencia || 0), 0);
+    const handleReprintCorte = async (turno) => {
+        try {
+            // Obtener detalle completo para asegurar data fresca
+            const fullDetail = await turnosAPI.getById(turno.id);
+            printCorteTicket({
+                tienda: storeConfig,
+                turno: {
+                    ...fullDetail,
+                    total_monto: fullDetail.venta_total,
+                    total_ventas: fullDetail.ventas?.length || 0,
+                    ventas_efectivo: fullDetail.totales_por_metodo?.find(pm => pm.metodo === 'Efectivo')?.total || 0,
+                    monto_final: turno.monto_final,
+                    diferencia: turno.diferencia
+                },
+                ventasPorCategoria: fullDetail.ventas_por_categoria,
+                totalesPorMetodo: fullDetail.totales_por_metodo,
+                numCancelados: fullDetail.num_cancelados,
+                totalCancelado: fullDetail.cancelado_total
+            });
+            toast.success("Imprimiendo ticket de corte...");
+
+        } catch (error) {
+            console.error("Error al reimprimir corte:", error);
+            toast.error("No se pudo imprimir el corte");
+        }
+    };
+
+    const totalVentas = turnos.reduce((sum, t) => sum + Number(t.total_actual || t.total_monto || 0), 0);
+    const totalDiferencias = turnos.filter(t => t.estado === 'CERRADO').reduce((sum, t) => sum + Number(t.diferencia || 0), 0);
 
     if (loading && turnos.length === 0) return <Loading />;
 
@@ -99,34 +136,51 @@ const CorteCaja = () => {
                     </div>
 
                     <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4 w-full xl:w-auto">
+                        {/* Quick Filters */}
+                        <div className="flex bg-white/50 dark:bg-slate-800/50 backdrop-blur-md rounded-2xl p-1.5 shadow-xl border dark:border-slate-700/50">
+                            {[
+                                { id: 'day', label: 'Día' },
+                                { id: 'week', label: 'Semana' },
+                                { id: 'month', label: 'Mes' },
+                                { id: 'custom', label: 'Calendario' }
+                            ].map((r) => (
+                                <button
+                                    key={r.id}
+                                    onClick={() => setSelectedRange(r.id)}
+                                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${selectedRange === r.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
+                                >
+                                    {r.label}
+                                </button>
+                            ))}
+                        </div>
+
                         {isAdmin && (
-                            <div className="relative group min-w-[240px]">
+                            <div className="relative group min-w-[200px]">
                                 <Store className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={18} />
                                 <select
                                     value={selectedTienda}
                                     onChange={(e) => setSelectedTienda(e.target.value)}
                                     className="select-standard pl-12 h-[56px] font-black text-[10px]"
                                 >
-                                    <option value="">RED DE TIENDAS (GLOBAL)</option>
+                                    <option value="">TIENDAS (GLOBAL)</option>
                                     {stores.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
                                 </select>
                             </div>
                         )}
 
-                        <div className="bg-white/50 dark:bg-slate-800/50 backdrop-blur-md rounded-2xl p-1.5 shadow-xl border dark:border-slate-700/50 flex items-center h-[56px]">
-                            {[{ key: "day", label: "HOY" }, { key: "week", label: "SEM" }, { key: "month", label: "MES" }, { key: "year", label: "AÑO" }].map((r) => (
-                                <button
-                                    key={r.key}
-                                    onClick={() => setTimeRange(r.key)}
-                                    className={`px-6 h-full rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${timeRange === r.key
-                                        ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                                        : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                                        }`}
-                                >
-                                    {r.label}
-                                </button>
-                            ))}
-                        </div>
+                        {selectedRange === 'custom' && (
+                            <div className="bg-white/50 dark:bg-slate-800/50 backdrop-blur-md rounded-2xl p-1.5 shadow-xl border dark:border-slate-700/50 flex items-center h-[56px] px-3">
+                                <div className="relative group flex items-center">
+                                    <Calendar className="absolute left-3 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={16} />
+                                    <input
+                                        type="date"
+                                        value={selectedDate}
+                                        onChange={(e) => setSelectedDate(e.target.value)}
+                                        className="input-standard pl-10 h-[44px] font-black w-full min-w-[150px] bg-transparent border-none shadow-none focus:ring-0 text-[11px]"
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         <button
                             onClick={loadTurnos}
@@ -167,7 +221,7 @@ const CorteCaja = () => {
                             <span className="text-4xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter">
                                 {formatCurrency(totalVentas)}
                             </span>
-                            <span className="text-[10px] font-black text-indigo-200 dark:text-indigo-800 uppercase tracking-widest">{timeRange}</span>
+                            <span className="text-[10px] font-black text-indigo-200 dark:text-indigo-800 uppercase tracking-widest">Global</span>
                         </div>
                     </div>
 
@@ -203,7 +257,7 @@ const CorteCaja = () => {
                                             <td className="px-8 py-6 border-none">
                                                 <div className="flex items-center gap-4">
                                                     <div className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-700 border dark:border-slate-600 flex items-center justify-center font-black text-slate-400 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
-                                                        #{t.id}
+                                                        <User size={20} />
                                                     </div>
                                                     <div>
                                                         <p className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-tight group-hover:text-indigo-600 transition-colors">{t.usuario_nombre || 'OPERADOR POS'}</p>
@@ -238,7 +292,7 @@ const CorteCaja = () => {
                                             <td className="px-8 py-6 border-none">
                                                 <div className="flex flex-col">
                                                     <p className="text-base font-black text-indigo-600 dark:text-indigo-400 tracking-tighter">
-                                                        +{formatCurrency(Number(t.ventas_efectivo || 0) + Number(t.ventas_tarjeta || 0) + Number(t.ventas_transferencia || 0))}
+                                                        {formatCurrency(Number(t.total_actual || t.total_monto || 0))}
                                                     </p>
                                                     <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mt-1 opacity-60">{t.num_ventas} OPERACIONES</p>
                                                 </div>
@@ -254,21 +308,57 @@ const CorteCaja = () => {
                                                         </div>
                                                     </div>
                                                 ) : (
-                                                    <div className="badge-standard bg-slate-50 dark:bg-slate-900 border-none text-slate-300 animate-pulse">SIN CIERRE</div>
+                                                    <div className="flex flex-col items-center gap-2">
+                                                        <div className="badge-standard bg-slate-50 dark:bg-slate-900 border-none text-slate-300 animate-pulse">SIN CIERRE</div>
+                                                        {isAdmin && (
+                                                            <button 
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    if (window.confirm(`¿Estás seguro de forzar el cierre del turno de ${t.usuario_nombre}?`)) {
+                                                                        turnosAPI.cerrar(t.id, 0, "Cierre forzado por administrador")
+                                                                            .then(() => {
+                                                                                 toast.success("Turno cerrado correctamente");
+                                                                                 loadTurnos();
+                                                                                 // Forzar recarga de la página para limpiar estados globales de turno
+                                                                                 setTimeout(() => window.location.reload(), 1500);
+                                                                             })
+                                                                             .catch(err => toast.error("Error al cerrar: " + err.message));
+                                                                    }
+                                                                }}
+                                                                className="px-3 py-1 bg-rose-500 hover:bg-rose-600 text-white text-[9px] font-black uppercase rounded-lg shadow-lg shadow-rose-500/20 transition-all active:scale-95"
+                                                            >
+                                                                Cerrar Turno
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </td>
-                                            <td className="px-8 py-6 text-center border-none">
-                                                <button
-                                                    onClick={() => toggleExpand(t.id)}
-                                                    className={`btn-secondary w-12 h-12 p-0 flex items-center justify-center transition-all ${expandedTurno === t.id ? "bg-indigo-600 border-indigo-600 text-white" : ""}`}
-                                                >
-                                                    {expandedTurno === t.id ? <ChevronUp size={20} /> : <FileText size={20} />}
-                                                </button>
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="flex justify-end items-center gap-2">
+                                                    {hasPermission('imprimir_corte') && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleReprintCorte(t);
+                                                            }}
+                                                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"
+                                                            title="Re-imprimir Ticket de Corte"
+                                                        >
+                                                            <FileText size={18} />
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => toggleExpand(t.id)}
+                                                        className={`p-2 rounded-lg transition-all ${expandedTurno === t.id ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:bg-slate-100'}`}
+                                                    >
+                                                        {expandedTurno === t.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                         {expandedTurno === t.id && (
                                             <tr>
-                                                <td colSpan="6" className="px-0 bg-slate-50/50 dark:bg-slate-900/40 border-b dark:border-slate-700/50">
+                                                <td colSpan="7" className="px-0 bg-slate-50/50 dark:bg-slate-900/40 border-b dark:border-slate-700/50">
                                                     <div className="p-10 grid grid-cols-1 lg:grid-cols-12 gap-10 animate-in fade-in slide-in-from-top-4 duration-500">
                                                         {/* Financial Details Container */}
                                                         <div className="lg:col-span-5 space-y-8">
@@ -345,34 +435,59 @@ const CorteCaja = () => {
                                                             )}
                                                         </div>
 
-                                                        {/* Sales Timeline */}
-                                                        <div className="lg:col-span-7 flex flex-col h-full">
+                                                        {/* Sales by Category & Cancellations */}
+                                                        <div className="lg:col-span-7 space-y-8">
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                                <div className="card-standard p-6 border-indigo-500/10">
+                                                                    <h4 className="text-[9px] font-black uppercase text-indigo-500 tracking-widest mb-4 flex items-center gap-2">
+                                                                        <Layers size={14} /> VENTAS POR CATEGORÍA
+                                                                    </h4>
+                                                                    <div className="space-y-3">
+                                                                        {turnoDetalle?.ventas_por_categoria?.length > 0 ? turnoDetalle.ventas_por_categoria.map(cat => (
+                                                                            <div key={cat.categoria} className="flex justify-between items-center text-[11px]">
+                                                                                <span className="font-bold text-slate-500 uppercase">{cat.categoria || 'GENERAL'}</span>
+                                                                                <span className="font-black text-slate-800 dark:text-white">{formatCurrency(cat.total)}</span>
+                                                                            </div>
+                                                                        )) : <div className="text-[10px] text-slate-400">Sin datos</div>}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="card-standard p-6 border-rose-500/10 bg-rose-50/5">
+                                                                    <h4 className="text-[9px] font-black uppercase text-rose-500 tracking-widest mb-4 flex items-center gap-2">
+                                                                        <AlertTriangle size={14} /> DEVOLUCIONES
+                                                                    </h4>
+                                                                    <div className="flex justify-between items-center">
+                                                                        <div className="text-[10px] font-bold text-slate-400 uppercase">Cantidad: {turnoDetalle?.num_cancelados || 0}</div>
+                                                                        <div className="text-lg font-black text-rose-500 tracking-tighter">{formatCurrency(turnoDetalle?.cancelado_total)}</div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+
                                                             <div className="card-standard p-8 shadow-xl bg-white dark:bg-slate-800 flex-1 flex flex-col">
                                                                 <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-[0.25em] mb-8 flex items-center gap-3">
                                                                     <ShoppingBasketIcon size={14} className="text-indigo-500" /> BITÁCORA DE TRANSACCIONES
                                                                 </h3>
                                                                 <div className="flex-1 overflow-y-auto space-y-4 pr-3 custom-scrollbar max-h-[600px]">
-                                                                    {turnoDetalle?.ventas?.length > 0 ? turnoDetalle.ventas.map((venta, idx) => (
-                                                                        <div key={venta.id} className="flex justify-between items-center p-5 bg-slate-50 dark:bg-slate-900/50 rounded-3xl border dark:border-slate-700/50 hover:bg-white dark:hover:bg-slate-800 hover:border-indigo-500/30 transition-all group shadow-sm">
+                                                                    {turnoDetalle?.ventas?.length > 0 ? turnoDetalle.ventas.map((venta) => (
+                                                                        <div key={venta.id} className={`flex justify-between items-center p-5 rounded-3xl border transition-all group shadow-sm ${venta.estado === 'CANCELADA' ? 'bg-rose-50/50 dark:bg-rose-900/10 border-rose-100 dark:border-rose-900/30' : 'bg-slate-50 dark:bg-slate-900/50 border-slate-100 dark:border-slate-700/50 hover:bg-white dark:hover:bg-slate-800 hover:border-indigo-500/30'}`}>
                                                                             <div className="flex items-center gap-6">
-                                                                                <div className="flex flex-col items-center justify-center w-14 h-14 bg-white dark:bg-slate-700 border dark:border-slate-600 rounded-2xl shadow-sm">
+                                                                                <div className={`flex flex-col items-center justify-center w-14 h-14 bg-white dark:bg-slate-700 border dark:border-slate-600 rounded-2xl shadow-sm ${venta.estado === 'CANCELADA' ? 'border-rose-200' : ''}`}>
                                                                                     <span className="text-[9px] font-black text-slate-300 uppercase leading-none mb-1">POS</span>
-                                                                                    <span className="text-sm font-black text-slate-800 dark:text-white">#{venta.id}</span>
+                                                                                    <span className={`text-sm font-black ${venta.estado === 'CANCELADA' ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>#{venta.id}</span>
                                                                                 </div>
                                                                                 <div className="min-w-0">
-                                                                                    <p className="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-tight leading-tight group-hover:text-indigo-600 transition-colors truncate max-w-[200px] xl:max-w-xs">{venta.resumen_productos || 'TRANSACCIÓN GENERAL'}</p>
+                                                                                    <p className={`text-xs font-black uppercase tracking-tight leading-tight transition-colors truncate max-w-[200px] xl:max-w-xs ${venta.estado === 'CANCELADA' ? 'text-rose-600 line-through opacity-70' : 'text-slate-700 dark:text-slate-200 group-hover:text-indigo-600'}`}>{venta.resumen_productos || 'TRANSACCIÓN GENERAL'}</p>
                                                                                     <div className="flex items-center gap-3 mt-2">
                                                                                         <span className="flex items-center gap-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">
                                                                                             <Clock size={10} /> {new Date(venta.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                                                         </span>
-                                                                                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg border ${venta.metodo_pago === 'EFECTIVO' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>
-                                                                                            {venta.metodo_pago}
+                                                                                        <span className={`${venta.estado === 'CANCELADA' ? 'bg-rose-100 text-rose-700' : (venta.metodo_pago === 'EFECTIVO' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100')} text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg border`}>
+                                                                                            {venta.estado === 'CANCELADA' ? 'CANCELADA' : venta.metodo_pago}
                                                                                         </span>
                                                                                     </div>
                                                                                 </div>
                                                                             </div>
                                                                             <div className="text-right ml-4">
-                                                                                <p className="text-xl font-black text-slate-800 dark:text-white tracking-tighter leading-none">{formatCurrency(venta.total)}</p>
+                                                                                <p className={`text-xl font-black tracking-tighter leading-none ${venta.estado === 'CANCELADA' ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>{formatCurrency(venta.total)}</p>
                                                                                 <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mt-1 opacity-0 group-hover:opacity-100 transition-opacity">Consolidado</p>
                                                                             </div>
                                                                         </div>
@@ -403,8 +518,8 @@ const CorteCaja = () => {
                             </tbody>
                         </table>
                     </div>
-                </div>
-            </div>
+                </div >
+            </div >
         </div>
     );
 };

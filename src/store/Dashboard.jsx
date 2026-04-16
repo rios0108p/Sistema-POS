@@ -162,7 +162,7 @@ export default function Dashboard() {
     { title: "Utilidad Neta", value: `${currency}${dashboardData.totalProfit.toFixed(2)}`, icon: TrendingUpIcon, visible: true, trend: dashboardData.tendencias.ganancia, color: "text-indigo-600" },
     { title: "Ganancia Bruta", value: `${currency}${dashboardData.totalGrossProfit.toFixed(2)}`, icon: TagsIcon, visible: true, trend: null, color: "text-blue-600" },
     { title: "Ventas Realizadas", value: dashboardData.totalOrders, icon: ShoppingCart, visible: true, trend: dashboardData.tendencias.ventas, color: "text-orange-500" },
-    { title: "Bajo Stock", value: dashboardData.outOfStock, icon: PackageIcon, visible: true, trend: null, color: dashboardData.outOfStock > 0 ? "text-red-600" : "text-emerald-600" },
+    { title: "Bajo Stock", value: dashboardData.outOfStock, icon: PackageIcon, visible: true, trend: null, color: dashboardData.outOfStock > 0 ? "text-red-600" : "text-emerald-600", path: "/store/inventarios?filter=bajoStock" },
   ];
 
   return (
@@ -175,12 +175,14 @@ export default function Dashboard() {
               <Zap className="text-white" size={24} />
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-slate-800 dark:text-white tracking-tight uppercase leading-none">
-              PANEL DE <span className="text-indigo-600 dark:text-indigo-400">CONTROL</span>
+              {user?.tienda_nombre || 'Sede Central'} <span className="text-indigo-600 dark:text-indigo-400">/ Dashboard</span>
             </h1>
           </div>
           <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.3em] opacity-80 flex items-center gap-2 mt-2">
             <span className="w-6 h-[1.5px] bg-indigo-500/30"></span>
-            Bienvenido de vuelta, {user?.nombre || 'Admin'}
+            Operador: <span className="text-slate-600 dark:text-slate-300 ml-1">{user?.username || 'Admin'}</span>
+            <span className="mx-2 opacity-30">|</span>
+            Rol: <span className="text-indigo-500 ml-1">{user?.rol}</span>
           </p>
         </div>
 
@@ -286,7 +288,11 @@ export default function Dashboard() {
       {/* MÉTRICAS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
         {cards.map((c, i) => (
-          <div key={i} className="card-standard p-5">
+          <div
+            key={i}
+            className={`card-standard p-5 ${c.path ? 'cursor-pointer hover:scale-[1.02] transition-all hover:shadow-indigo-500/10' : ''}`}
+            onClick={() => c.path && navigate(c.path)}
+          >
             <div className="flex justify-between items-start">
               <div className="flex-1">
                 <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-1">{c.title}</p>
@@ -446,10 +452,10 @@ export default function Dashboard() {
           <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
             {dashboardData.lowStockProducts?.length > 0 ? (
               dashboardData.lowStockProducts.map((p) => (
-                <div key={`${p.id}-${p.tienda_id}`} onClick={() => navigate(`/store/compras?productId=${p.id}${p.tienda_id ? `&tiendaId=${p.tienda_id}` : ''}`)} className="p-4 flex items-center justify-between bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl hover:border-red-200 dark:hover:border-red-900 shadow-sm hover:shadow-md transition-all cursor-pointer group">
-                  <div className="flex items-center gap-4">
+                <div key={`${p.id}-${p.tienda_id}`} className="p-4 flex items-center justify-between bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl hover:border-red-200 dark:hover:border-red-900 shadow-sm hover:shadow-md transition-all group">
+                  <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => navigate(`/store/add-product?id=${p.id}`)}>
                     <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center overflow-hidden border">
-                      {p.imagenes?.length > 0 ? <img src={getImageUrl(p.imagenes[0])} alt="" className="w-full h-full object-cover" /> : <PackageIcon size={20} className="text-slate-300" />}
+                      {p.images?.length > 0 ? <img src={getImageUrl(p.images[0])} alt="" className="w-full h-full object-cover" /> : <PackageIcon size={20} className="text-slate-300" />}
                     </div>
                     <div>
                       <p className="text-sm font-bold text-slate-800 dark:text-white leading-tight uppercase tracking-tighter">{p.nombre}</p>
@@ -464,9 +470,22 @@ export default function Dashboard() {
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className={`text-xl font-bold ${p.cantidad === 0 ? 'text-red-600' : 'text-amber-500'}`}>{p.cantidad}</p>
-                    <p className="text-[9px] font-bold text-slate-300 uppercase leading-none">Min: {p.stock_minimo || 5}</p>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className={`text-xl font-bold ${Number(p.cantidad) <= 0 ? 'text-red-600' : 'text-amber-500'}`}>{p.cantidad}</p>
+                      <p className="text-[9px] font-bold text-slate-300 uppercase leading-none">Min: {p.stock_minimo || 5}</p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const cantPedir = Math.max(1, (p.stock_minimo || 5) * 2 - Number(p.cantidad || 0));
+                        navigate(`/store/orders?newOrder=true&productId=${p.id}&tiendaId=${p.tienda_id || ''}&cantidad=${cantPedir}`);
+                      }}
+                      className="p-2.5 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all active:scale-95"
+                      title="Generar Pedido"
+                    >
+                      <ShoppingCart size={18} />
+                    </button>
                   </div>
                 </div>
               ))
