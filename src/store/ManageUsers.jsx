@@ -335,7 +335,7 @@ export default function ManageUsers() {
                                             Permisos de Acceso Específicos
                                         </label>
                                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                            {Object.keys(formData.permisos).map((perm) => (
+                                            {Object.keys(formData.permisos || {}).map((perm) => (
                                                 <div
                                                     key={perm}
                                                     onClick={() => setFormData({

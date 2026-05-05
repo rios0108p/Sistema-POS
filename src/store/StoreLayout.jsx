@@ -58,12 +58,7 @@ const StoreLayout = () => {
 
   return (
     <div className="flex flex-col h-screen bg-white dark:bg-slate-900 transition-colors duration-500 overflow-hidden">
-      {/* Electron Title Bar (only in desktop) */}
-      {isElectron && (
-        <div className="z-50">
-          <ElectronTitleBar />
-        </div>
-      )}
+      {/* Electron Title Bar removed here - already rendered in App.jsx root */}
       
       {/* Header should also blur if requested */}
       <div className="layout-content-wrapper z-40">

@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense } from "react";
+import React, { useEffect, lazy, Suspense } from "react";
 import { HashRouter as Router, Routes, Route, useLocation, Navigate, useNavigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -8,6 +8,7 @@ import ProtectedRoute from "./Components/ProtectedRoute";
 import ScrollToTop from "./Components/Common/ScrollToTop";
 import Loading from "./Components/Common/Loading";
 import ElectronTitleBar from "./Components/ElectronTitleBar";
+import { XCircle } from "lucide-react";
 import Login from "./Pages/Login"; // Keep Login static for faster initial render
 
 // Lazy Imports for Code Splitting
@@ -30,6 +31,37 @@ const MovementHistory = lazy(() => import("./store/MovementHistory"));
 const ManagePromociones = lazy(() => import("./store/ManagePromociones"));
 const ManageGastos = lazy(() => import("./store/ManageGastos"));
 
+
+// Simple Error Boundary component
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, errorInfo) { console.error("React Error Boundary:", error, errorInfo); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-900 text-white p-10 text-center">
+          <XCircle size={64} className="text-rose-500 mb-6" />
+          <h1 className="text-2xl font-black mb-4 uppercase tracking-tighter">Algo salió mal</h1>
+          <p className="text-slate-400 mb-4 max-w-md">La aplicación ha detectado un error técnico.</p>
+          <div className="bg-white/5 p-4 rounded-xl mb-8 text-[10px] font-mono text-slate-500 max-w-lg overflow-auto">
+            {this.state.error?.toString()}
+          </div>
+          <button 
+            onClick={() => window.location.href = '#/'}
+            className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold transition-all"
+          >
+            Volver al Inicio
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function AppContent() {
   const location = useLocation();
@@ -142,8 +174,10 @@ function App() {
       <ThemeProvider>
         <AuthProvider>
           <NetworkProvider>
-            <ElectronTitleBar />
-            <AppContent />
+            <ErrorBoundary>
+              <ElectronTitleBar />
+              <AppContent />
+            </ErrorBoundary>
           </NetworkProvider>
         </AuthProvider>
       </ThemeProvider>

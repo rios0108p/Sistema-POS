@@ -3,9 +3,10 @@ import { useNetwork } from '../context/NetworkContext';
 import { X, RefreshCw, UploadCloud, Database, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 const SyncManagerPanel = ({ isOpen, onClose }) => {
-  const { isOnline, pendingOps, syncDb, isSyncing } = useNetwork();
+  const { isOnline, pendingOps, syncDb, isSyncing, syncProgress } = useNetwork();
   const [summary, setSummary] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
 
   const fetchSummary = async () => {
     if (window.electronAPI?.isDesktop && window.electronAPI.localDB?.getPendingSummary) {
@@ -28,8 +29,11 @@ const SyncManagerPanel = ({ isOpen, onClose }) => {
   }, [isOpen, pendingOps]); // Refresh when pendingOps changes
 
   const handleForceSync = async () => {
+    if (cooldown) return;
     await syncDb();
     await fetchSummary();
+    setCooldown(true);
+    setTimeout(() => setCooldown(false), 5000);
   };
 
   const traduccionesTablas = {
@@ -115,6 +119,30 @@ const SyncManagerPanel = ({ isOpen, onClose }) => {
                </div>
             )}
           </div>
+
+          {isSyncing && syncProgress && (
+            <div className="mt-4 p-4 rounded-2xl bg-indigo-50 border border-indigo-100 dark:bg-indigo-900/20 dark:border-indigo-800/50">
+                <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
+                        {syncProgress.step === 'push_start' && 'Subiendo datos (' + pendingOps + ')'}
+                        {syncProgress.step === 'pull_start' && 'Descarga iniciada...'}
+                        {syncProgress.step === 'pulling_table' && `Descargando: ${traduccionesTablas[syncProgress.table] || syncProgress.table}`}
+                        {syncProgress.step === 'done' && 'Sincronización finalizada'}
+                    </span>
+                    {syncProgress.current && syncProgress.total && (
+                         <span className="text-xs font-bold text-indigo-500">{syncProgress.current}/{syncProgress.total}</span>
+                    )}
+                </div>
+                {syncProgress.current && syncProgress.total && (
+                    <div className="w-full bg-indigo-100 dark:bg-indigo-950 h-2 rounded-full overflow-hidden">
+                        <div 
+                            className="bg-indigo-500 h-full transition-all duration-300"
+                            style={{ width: `${(syncProgress.current / syncProgress.total) * 100}%` }}
+                        />
+                    </div>
+                )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -126,17 +154,17 @@ const SyncManagerPanel = ({ isOpen, onClose }) => {
             Cerrar
           </button>
           
-          <button 
+          <button
             onClick={handleForceSync}
-            disabled={!isOnline || pendingOps === 0 || isSyncing}
+            disabled={!isOnline || pendingOps === 0 || isSyncing || cooldown}
             className={`flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg transition-all active:scale-95 ${
-              (!isOnline || pendingOps === 0) ? 'bg-slate-200 text-slate-400 dark:bg-slate-800 dark:text-slate-600 shadow-none cursor-not-allowed' :
+              (!isOnline || pendingOps === 0 || cooldown) ? 'bg-slate-200 text-slate-400 dark:bg-slate-800 dark:text-slate-600 shadow-none cursor-not-allowed' :
               isSyncing ? 'bg-indigo-400 text-white shadow-indigo-500/20 cursor-wait' :
               'bg-indigo-600 text-white hover:bg-indigo-500 shadow-indigo-500/30'
             }`}
           >
             {isSyncing ? <RefreshCw className="animate-spin" size={16} /> : <UploadCloud size={16} />}
-            {isSyncing ? 'SINCRONIZANDO...' : 'FORZAR SYNC'}
+            {isSyncing ? 'SINCRONIZANDO...' : cooldown ? 'ESPERA 5s...' : 'FORZAR SYNC'}
           </button>
         </div>
 

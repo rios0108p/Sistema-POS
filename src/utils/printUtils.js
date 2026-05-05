@@ -48,6 +48,91 @@ export const resetPrinter = () => {
     toast.success("Impresora olvidada.");
 };
 
+// --- Generador de HTML para Tickets ---
+function generateTicketHtml(data) {
+    const bizName = data.sucursal?.nombre || data.tienda?.nombre_tienda || 'TENDO-POS';
+    const bizDir = data.sucursal?.direccion || data.tienda?.direccion || '';
+    const bizTel = data.sucursal?.telefono || data.tienda?.telefono || '';
+    
+    // Determine the type of ticket
+    let title = "TICKET DE VENTA";
+    if (data.isCorte) title = "CORTE DE CAJA";
+    if (data.isMovimiento) title = data.tipo === 'SALIDA' ? 'SALIDA DE DINERO' : 'ENTRADA DE DINERO';
+
+    const itemsHtml = (data.productos || []).map(p => `
+        <tr>
+            <td style="text-align: left;">${p.cantidad} x ${p.nombre.substring(0, 18)}</td>
+            <td style="text-align: right;">$${(p.cantidad * p.precio).toFixed(2)}</td>
+        </tr>
+    `).join('');
+
+    const pagosHtml = (data.pagos || []).map(p => `
+        <div style="display: flex; justify-content: space-between;">
+            <span>${p.metodo}:</span>
+            <span>$${Number(p.monto).toFixed(2)}</span>
+        </div>
+    `).join('');
+
+    return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { font-family: 'Courier New', Courier, monospace; font-size: 14px; width: 80mm; margin: 0; padding: 10px; }
+                .text-center { text-align: center; }
+                .text-right { text-align: right; }
+                .bold { font-weight: bold; }
+                .header { margin-bottom: 20px; }
+                .divider { border-top: 1px dashed #000; margin: 10px 0; }
+                table { width: 100%; border-collapse: collapse; }
+                .total { font-size: 18px; margin-top: 10px; }
+            </style>
+        </head>
+        <body>
+            <div class="header text-center">
+                <div class="bold" style="font-size: 18px;">${bizName.toUpperCase()}</div>
+                <div>${bizDir}</div>
+                <div>TEL: ${bizTel}</div>
+                <div class="divider"></div>
+                <div class="bold">${title}</div>
+                <div>${new Date().toLocaleString()}</div>
+            </div>
+
+            ${data.isCorte ? `
+                <div class="bold">RESUMEN DE TURNO</div>
+                <div>Cajero: ${data.turno?.usuario_nombre || ''}</div>
+                <div class="divider"></div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Ventas (${data.turno?.total_ventas || 0}):</span>
+                    <span>$${Number(data.turno?.total_monto || 0).toFixed(2)}</span>
+                </div>
+            ` : data.isMovimiento ? `
+                <div class="total text-center bold">$${Number(data.monto).toFixed(2)}</div>
+                <div style="margin-top: 10px;">Concepto: ${data.descripcion || ''}</div>
+                <div>Atendió: ${data.usuario_nombre || ''}</div>
+            ` : `
+                <table>
+                    ${itemsHtml}
+                </table>
+                <div class="divider"></div>
+                <div class="text-right">
+                    <div>SUBTOTAL: $${Number(data.venta?.subtotal || 0).toFixed(2)}</div>
+                    <div class="total bold">TOTAL: $${Number(data.venta?.total || 0).toFixed(2)}</div>
+                </div>
+                <div class="divider"></div>
+                ${pagosHtml}
+            `}
+
+            <div class="divider"></div>
+            <div class="text-center" style="margin-top: 20px;">
+                ${data.sucursal?.ticket_footer || '!GRACIAS POR SU COMPRA!'}
+            </div>
+            <div style="height: 50px;"></div>
+        </body>
+        </html>
+    `;
+}
+
 // --- Generador de Comandos ESC/POS ---
 function generateEscPosTicket(data) {
     const encoder = new TextEncoder();

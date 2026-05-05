@@ -66,16 +66,16 @@ const GlobalSearch = () => {
                 const q = query.toLowerCase();
 
                 const filteredProducts = (productsRes || [])
-                    .filter(p => p.nombre?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q))
+                    .filter(p => p && (p.nombre?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q)))
                     .slice(0, 5);
 
                 const filteredCustomers = (customersRes || [])
-                    .filter(c => c.nombre?.toLowerCase().includes(q) || c.telefono?.includes(q))
+                    .filter(c => c && (c.nombre?.toLowerCase().includes(q) || c.telefono?.includes(q)))
                     .slice(0, 3);
 
                 setResults({
-                    products: filteredProducts,
-                    customers: filteredCustomers
+                    products: Array.isArray(filteredProducts) ? filteredProducts : [],
+                    customers: Array.isArray(filteredCustomers) ? filteredCustomers : []
                 });
             } catch (error) {
                 console.error("Search error:", error);

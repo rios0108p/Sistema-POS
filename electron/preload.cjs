@@ -44,12 +44,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     markSynced: (table, id, mysqlId) => ipcRenderer.invoke('db:markSynced', { table, id, mysqlId }),
     getPendingSync: (table) => ipcRenderer.invoke('db:getPendingSync', { table }),
     upsert: (table, data) => ipcRenderer.invoke('db:upsert', { table, data }),
+    getUserByUsername: (username) => ipcRenderer.invoke('db:getUserByUsername', { username }),
+    getUserByPin: (pin) => ipcRenderer.invoke('db:getUserByPin', { pin }),
     getSyncMeta: (key) => ipcRenderer.invoke('db:getSyncMeta', { key }),
     setSyncMeta: (key, value) => ipcRenderer.invoke('db:setSyncMeta', { key, value }),
   },
   sync: {
-    push: () => ipcRenderer.invoke('sync:push'),
-    pull: () => ipcRenderer.invoke('sync:pull'),
-    full: () => ipcRenderer.invoke('sync:full'),
+    push: (token) => ipcRenderer.invoke('sync:push', token),
+    pull: (token) => ipcRenderer.invoke('sync:pull', token),
+    full: (token) => ipcRenderer.invoke('sync:full', token),
+    onProgress: (callback) => {
+        const handler = (event, progressInfo) => callback(progressInfo);
+        ipcRenderer.on('sync:progress', handler);
+        return () => { ipcRenderer.removeListener('sync:progress', handler); };
+    }
   }
 });

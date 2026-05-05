@@ -36,6 +36,12 @@ export const AuthProvider = ({ children }) => {
                     if (!parsedUser.sessionStart) {
                         parsedUser.sessionStart = new Date().toISOString();
                     }
+                    // Ensure permissions are always an object
+                    if (typeof parsedUser.permisos === 'string') {
+                        try { parsedUser.permisos = JSON.parse(parsedUser.permisos); } catch(e) { parsedUser.permisos = {}; }
+                    }
+                    parsedUser.permisos = parsedUser.permisos || {};
+                    
                     setUser(parsedUser);
                     setIsOfflineMode(wasOffline);
                 } catch (e) {
@@ -86,7 +92,8 @@ export const AuthProvider = ({ children }) => {
 
         // Save for future offline access if password is provided
         if (password) {
-            await saveLastAuth(userData.username, password, userData, token);
+            const userNameToSave = userData.username || userData.nombre_usuario;
+            await saveLastAuth(userNameToSave, password, userData, token);
         }
 
         if (turno) {
@@ -102,7 +109,7 @@ export const AuthProvider = ({ children }) => {
             throw new Error("Se requiere conexión para el primer inicio de sesión");
         }
 
-        if (lastAuth.username !== username) {
+        if (!lastAuth.username || lastAuth.username.toLowerCase() !== username.toLowerCase()) {
             throw new Error("No hay datos guardados para este usuario offline");
         }
 

@@ -14,6 +14,19 @@
 import { useCallback } from 'react';
 import { useNetwork } from '../context/NetworkContext';
 
+// Module-level debounce: N rapid writes → 1 sync after 800ms of silence
+let _syncTimer = null;
+const SYNC_DEBOUNCE_MS = 800;
+
+function scheduleSyncOnce(token) {
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    window.electronAPI?.sync?.full(token).catch(err => {
+      console.warn('Background sync failed (will retry on next connection):', err.message);
+    });
+  }, SYNC_DEBOUNCE_MS);
+}
+
 // UUID v4 generator (browser-compatible)
 function generateUUID() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -30,7 +43,7 @@ function isDesktopWithDB() {
 }
 
 export function useOfflineOperation(tableName) {
-  const { isOnline, updatePendingOps } = useNetwork();
+  const { isOnline, updatePendingOps, isSyncing } = useNetwork();
 
   /**
    * Execute a data operation (local-first)
@@ -88,12 +101,9 @@ export function useOfflineOperation(tableName) {
       const pendingCount = await localDB.countPendingOps();
       updatePendingOps(pendingCount);
 
-      // STEP 2: If online, trigger background sync (non-blocking)
+      // STEP 2: If online, schedule a debounced sync — N rapid writes → 1 sync
       if (isOnline && window.electronAPI?.sync?.full) {
-        // Fire and forget — don't await
-        window.electronAPI.sync.full().catch(err => {
-          console.warn('Background sync failed (will retry):', err.message);
-        });
+        scheduleSyncOnce(localStorage.getItem('token'));
       }
 
       // STEP 3: Return success immediately
@@ -105,7 +115,7 @@ export function useOfflineOperation(tableName) {
     }
   }, [tableName, isOnline, updatePendingOps]);
 
-  return { execute, isOnline, isSyncing: false, pendingSales: [] };
+  return { execute, isOnline, isSyncing, pendingSales: [] };
 }
 
 export default useOfflineOperation;

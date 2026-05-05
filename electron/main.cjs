@@ -19,13 +19,13 @@ function initLocalDB() {
   try {
     console.log('📦 Starting local database initialization...');
     
-    // Better path resolution for imports
-    const localDBPath = path.resolve(__dirname, '..', 'src/services/db/localDB.js');
-    const migrationsPath = path.resolve(__dirname, '..', 'src/services/db/migrations.js');
+    // Use .cjs extensions to avoid ESM issues in Electron/Node
+    const localDBPath = path.resolve(__dirname, '..', 'src/services/db/localDB.cjs');
+    const migrationsPath = path.resolve(__dirname, '..', 'src/services/db/migrations.cjs');
     
     // Check if files exist before requiring
     if (!fs.existsSync(localDBPath)) {
-      const errorMsg = `localDB.js source NOT FOUND at: ${localDBPath}`;
+      const errorMsg = `localDB.cjs source NOT FOUND at: ${localDBPath}`;
       console.error('❌', errorMsg);
       dbInitError = errorMsg;
       return false;
@@ -45,13 +45,21 @@ function initLocalDB() {
 
     // Load sync modules
     try {
-      const syncManagerPath = path.resolve(__dirname, '..', 'src/services/sync/syncManager.js');
-      const conflictResolverPath = path.resolve(__dirname, '..', 'src/services/sync/conflictResolver.js');
+      const syncManagerPath = path.resolve(__dirname, '..', 'src/services/sync/syncManager.cjs');
+      const conflictResolverPath = path.resolve(__dirname, '..', 'src/services/sync/conflictResolver.cjs');
       
+      console.log('📦 Loading syncManager from:', syncManagerPath);
       syncManager = require(syncManagerPath);
+      console.log('✅ syncManager loaded successfully');
+      
+      console.log('📦 Loading conflictResolver from:', conflictResolverPath);
       conflictResolver = require(conflictResolverPath);
-    } catch (syncError) {
-      console.warn('⚠️ Sync modules failed to load (non-critical):', syncError.message);
+      console.log('✅ conflictResolver loaded successfully');
+
+    } catch (err) {
+      console.error('❌ Failed to load sync modules:', err);
+      console.error('Error details:', err.message);
+      if (err.stack) console.error('Stack trace:', err.stack);
     }
 
     return true;
@@ -165,6 +173,17 @@ function registerIPCHandlers() {
     return localDB.upsert(table, data);
   });
 
+  // Parameterized user lookup — never use string-interpolated WHERE for this
+  ipcMain.handle('db:getUserByUsername', (_event, { username }) => {
+    if (!localDB) return null;
+    return localDB.getUserByUsername(username);
+  });
+
+  ipcMain.handle('db:getUserByPin', (_event, { pin }) => {
+    if (!localDB) return null;
+    return localDB.getUserByPin(pin);
+  });
+
   ipcMain.handle('db:getSyncMeta', (event, { key }) => {
     if (!localDB) return null;
     return localDB.getSyncMeta(key);
@@ -177,19 +196,21 @@ function registerIPCHandlers() {
   });
 
   // ===== SYNC IPC HANDLERS =====
-  ipcMain.handle('sync:push', async () => {
+  ipcMain.handle('sync:push', async (event, token) => {
     if (!localDB || !syncManager) throw new Error('Sync not initialized');
-    return await syncManager.pushToMySQL(localDB);
+    return await syncManager.pushToMySQL(localDB, token);
   });
 
-  ipcMain.handle('sync:pull', async () => {
+  ipcMain.handle('sync:pull', async (event, token) => {
     if (!localDB || !syncManager || !conflictResolver) throw new Error('Sync not initialized');
-    return await syncManager.pullFromMySQL(localDB, conflictResolver);
+    return await syncManager.pullFromMySQL(localDB, conflictResolver, token);
   });
 
-  ipcMain.handle('sync:full', async () => {
+  ipcMain.handle('sync:full', async (event, token) => {
     if (!localDB || !syncManager || !conflictResolver) throw new Error('Sync not initialized');
-    return await syncManager.fullSync(localDB, conflictResolver);
+    return await syncManager.fullSync(localDB, conflictResolver, token, (progressInfo) => {
+        event.sender.send('sync:progress', progressInfo);
+    });
   });
 
   // ===== PRINTER HANDLERS =====

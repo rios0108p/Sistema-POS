@@ -193,7 +193,7 @@ const RegistrarCompras = () => {
         }]
       };
 
-      await executePurchase('insert', data);
+      await comprasAPI.create(data);
       toast.success("Compra registrada correctamente");
 
       setProductoSeleccionado(null);

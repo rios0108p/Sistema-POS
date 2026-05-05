@@ -78,10 +78,15 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const stats = await dashboardAPI.getStats(timeRange, selectedTienda, selectedTurno);
+      if (!stats) {
+        setLoading(false);
+        return;
+      }
+
       setDashboardData({
         totalProducts: stats.totalProductos || 0,
         totalRevenue: stats.financiero?.ingresos || 0,
-        totalProfit: stats.financiero?.ganancia_neta || 0,
+        totalProfit: stats.financiero?.ganancia_neta || stats.financiero?.ganancia || 0,
         totalGrossProfit: stats.financiero?.ganancia_bruta || 0,
         totalExpenses: stats.financiero?.gastos || 0,
         totalCost: stats.financiero?.costo || 0,

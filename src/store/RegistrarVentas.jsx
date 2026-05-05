@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { productosAPI, ventasAPI, clientesAPI, turnosAPI, tiendasAPI, movimientosAPI, promocionesAPI } from "../services/api";
 import { toast } from "react-hot-toast";
@@ -30,8 +30,6 @@ import hardwareService from "../services/hardwareService";
 import { normalizeProduct } from "../utils/productUtils";
 import { formatDate, formatDateTime } from "../utils/dateUtils";
 import { formatCurrency, cleanCurrency } from "../utils/formatUtils";
-import { List } from 'react-window';
-
 
 const RegistrarVentas = () => {
   // --- ESSENTIAL HOOKS ONLY (TOP LEVEL) ---
@@ -59,6 +57,12 @@ const RegistrarVentas = () => {
   const [cart, setCart] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0); // Track selected item in list
+
+  // --- Search Parsing (Real-time) ---
+  const { cantidad: cantidadBusqueda, query: queryBusqueda } = useMemo(() => 
+    parseQtyFromSearch(busqueda || ""), 
+    [busqueda]
+  );
 
   // Selection for Variations
   const [prodSeleccionado, setProdSeleccionado] = useState(null); // Modal/Area para seleccionar variacion
@@ -109,7 +113,6 @@ const RegistrarVentas = () => {
   const [pendingTicketsCount, setPendingTicketsCount] = useState(0);
 
 
-
   // --- Initialization ---
   useEffect(() => {
     loadData();
@@ -120,7 +123,7 @@ const RegistrarVentas = () => {
     // Load top selling products for quick access
     dashboardAPI.getStats('month', selectedTiendaId)
       .then(data => {
-        if (data.topProductos) setTopProductos(data.topProductos);
+        if (data && data.topProductos) setTopProductos(data.topProductos);
       })
       .catch(err => console.error("Error loading top products:", err));
 
@@ -235,7 +238,7 @@ const RegistrarVentas = () => {
         prodsRaw = await productosAPI.getAll();
       }
 
-      const prods = (prodsRaw || []).map(p => normalizeProduct(p));
+      const prods = (prodsRaw || []).map(p => normalizeProduct(p)).filter(Boolean);
       setProductos(prods);
 
       // 2. Cargar Clientes y Promociones (Fix #48: single call, no duplicate)
@@ -246,12 +249,13 @@ const RegistrarVentas = () => {
       setClientes(Array.isArray(cli) ? cli : []);
       setPromociones(promos || []);
 
-      // 3. Calcular Siguiente Ticket (sin sobrescribir el historial visual)
-      const hist = await ventasAPI.getAll({ tienda_id: selectedTiendaId });
+      // 3. Calcular Siguiente Ticket (Optimizado v1.1.4)
       if (turnoActivo) {
-        const shiftSales = Array.isArray(hist) ? hist.filter(v => v.turno_id === turnoActivo.id) : [];
-        const maxTicket = shiftSales.reduce((max, v) => (v.ticket_numero > max ? v.ticket_numero : max), 0);
-        setNextTicketNo(maxTicket + 1);
+        const { nextTicket } = await ventasAPI.getProximoTicket({ 
+          tienda_id: selectedTiendaId,
+          turno_id: turnoActivo.id 
+        });
+        setNextTicketNo(nextTicket || 1);
       }
     } catch (error) {
       console.error('Error loading POS data:', error);
@@ -263,10 +267,11 @@ const RegistrarVentas = () => {
   const fetchNextTicket = async () => {
     if (!turnoActivo) return;
     try {
-      const history = await ventasAPI.getAll({ tienda_id: selectedTiendaId });
-      const shiftSales = history.filter(v => v.turno_id === turnoActivo.id);
-      const maxTicket = shiftSales.reduce((max, v) => (v.ticket_numero > max ? v.ticket_numero : max), 0);
-      setNextTicketNo(maxTicket + 1);
+      const { nextTicket } = await ventasAPI.getProximoTicket({ 
+        tienda_id: selectedTiendaId,
+        turno_id: turnoActivo.id 
+      });
+      setNextTicketNo(nextTicket || 1);
     } catch (error) {
       console.error("Error al obtener el siguiente ticket:", error);
     }
@@ -283,12 +288,15 @@ const RegistrarVentas = () => {
 
       // Filter movements for the active shift
       // REGRE-REQ: Only show history if a shift is active. If shift closed, history should be empty for POS.
+      const safeMovimientos = Array.isArray(movimientosData) ? movimientosData : [];
+      const safeCotizaciones = Array.isArray(cotizacionesData) ? cotizacionesData : [];
+
       if (turnoActivo?.id) {
-        setVentas(movimientosData.filter(m => m.turno_id === turnoActivo.id));
+        setVentas(safeMovimientos.filter(m => m?.turno_id === turnoActivo.id));
       } else {
         setVentas([]); // Cleanup: no shift, no history in POS tab
       }
-      setCotizaciones(cotizacionesData);
+      setCotizaciones(safeCotizaciones);
     } catch (error) {
       console.log("Error loading POS history:", error);
     }
@@ -304,12 +312,16 @@ const RegistrarVentas = () => {
       clientesAPI.getPreciosEspeciales(clienteId)
         .then(data => {
           const mapping = {};
-          data.forEach(p => {
-            mapping[p.producto_id] = {
-              precio: Number(p.precio_especial),
-              min_cantidad: Number(p.min_cantidad || 1)
-            };
-          });
+          if (Array.isArray(data)) {
+            data.forEach(p => {
+              if (p?.producto_id) {
+                mapping[p.producto_id] = {
+                  precio: Number(p.precio_especial),
+                  min_cantidad: Number(p.min_cantidad || 1)
+                };
+              }
+            });
+          }
           setPreciosEspeciales(mapping);
 
           // Update cart prices if they already have items
@@ -695,6 +707,27 @@ const RegistrarVentas = () => {
       return;
     }
 
+    // Stock re-validation at payment time — catches concurrent sales that depleted stock
+    for (const item of cart) {
+      if (item.isCombo) {
+        for (const subItem of item.items) {
+          const prod = productos.find(p => Number(p.id) === Number(subItem.id));
+          if (prod && (prod.cantidad ?? Infinity) < subItem.cantidad * item.cantidad) {
+            toast.error(`Stock insuficiente para "${subItem.nombre || prod.nombre}". Disponible: ${prod.cantidad}`);
+            setLoading(false);
+            return;
+          }
+        }
+      } else {
+        const prod = productos.find(p => Number(p.id) === Number(item.id));
+        if (prod && prod.cantidad !== undefined && prod.cantidad !== null && prod.cantidad < item.cantidad) {
+          toast.error(`Stock insuficiente para "${prod.nombre}". Disponible: ${prod.cantidad}`);
+          setLoading(false);
+          return;
+        }
+      }
+    }
+
     try {
       console.log('=== VENTA DEBUG ===');
       console.log('clienteId raw:', clienteId);
@@ -740,7 +773,7 @@ const RegistrarVentas = () => {
         ticket_numero: nextTicketNo
       };
 
-      let response = await executeSales('insert', payload);
+      let response = await ventasAPI.create(payload);
 
       toast.success("¡Venta Exitosa!");
 
@@ -788,6 +821,7 @@ const RegistrarVentas = () => {
       fetchNextTicket();
       loadData(); // Refresh stock
       loadTurnoActivo();
+      loadHistory(); // <-- REFRESH HISTORY IMMEDIATELY
 
       // Prevention: Blur active element and focus search
       setTimeout(() => {
@@ -930,55 +964,66 @@ const RegistrarVentas = () => {
 
 
   // --- Render Helpers ---
-  const { cantidad: cantidadBusqueda, query: queryBusqueda } = parseQtyFromSearch(busqueda || "");
 
-  const productosFiltrados = productos.map(p => {
-    const q = (queryBusqueda || "").toLowerCase().trim();
-    if (!q) return { ...p, _score: 0 };
+  const productosFiltrados = useMemo(() => {
+    try {
+      const q = (queryBusqueda || "").toLowerCase().trim();
 
-    let score = 0;
-    const nameLower = (p.nombre || p.name || "").toLowerCase();
-    const codeLower = (p.codigo_barras || "").toLowerCase();
+      if (!q) return (Array.isArray(productos) ? productos : []).map(p => ({ ...p, _score: 0 }));
 
-    // 1. Prioridad Máxima: Coincidencia EXACTA en código principal o alias
-    if (codeLower === q) score += 1000;
+      const safeProducts = Array.isArray(productos) ? productos : [];
+      return safeProducts.map(p => {
+        if (!p) return null;
+        let score = 0;
+        const nameLower = (p.nombre || p.name || "").toLowerCase();
+        const codeLower = (p.codigo_barras || "").toLowerCase();
 
-    let extraCodes = p.barcodesAgrupados || p.barcodes_agrupados || [];
-    if (typeof extraCodes === 'string') {
-      try { extraCodes = JSON.parse(extraCodes); } catch (e) { extraCodes = [extraCodes]; }
+        // 1. Prioridad Máxima: Coincidencia EXACTA en código principal o alias
+        if (codeLower === q) score += 1000;
+
+        let extraCodes = p.barcodesAgrupados || p.barcodes_agrupados || [];
+        if (typeof extraCodes === 'string') {
+          try { extraCodes = JSON.parse(extraCodes); } catch (e) { extraCodes = [extraCodes]; }
+        }
+        if (Array.isArray(extraCodes)) {
+          if (extraCodes.some(bc => String(bc).toLowerCase() === q)) score += 900;
+          else if (extraCodes.some(bc => String(bc).toLowerCase().includes(q))) score += 150;
+        }
+
+        // 2. Prioridad Variaciones
+        if (Array.isArray(p.variaciones)) {
+          if (p.variaciones.some(v => v?.codigo_barras?.toLowerCase() === q)) score += 850;
+          else if (p.variaciones.some(v => v?.codigo_barras?.toLowerCase().includes(q))) score += 120;
+        }
+
+        // 3. Prioridad Nombre
+        if (nameLower === q) score += 500;
+        else if (nameLower.startsWith(q)) score += 300;
+        else if (nameLower.includes(q)) score += 100;
+
+        // 4. Barcode parcial
+        if (codeLower.includes(q) && score < 1000) score += 200;
+
+        return { ...p, _score: score };
+      })
+        .filter(p => p && p._score > 0)
+        .sort((a, b) => {
+          // Primary: Stock presence (Always push 0 items to bottom)
+          const aHasStock = (a.cantidad || 0) > 0;
+          const bHasStock = (b.cantidad || 0) > 0;
+          if (aHasStock && !bHasStock) return -1;
+          if (!aHasStock && bHasStock) return 1;
+
+          // Secondary: Search Score
+          if (b._score !== a._score) return b._score - a._score;
+
+          return 0;
+        });
+    } catch (error) {
+      console.error("Error filtering products:", error);
+      return [];
     }
-    if (Array.isArray(extraCodes)) {
-      if (extraCodes.some(bc => String(bc).toLowerCase() === q)) score += 900;
-      else if (extraCodes.some(bc => String(bc).toLowerCase().includes(q))) score += 150;
-    }
-
-    // 2. Prioridad Variaciones
-    if (p.variaciones?.some(v => v.codigo_barras?.toLowerCase() === q)) score += 850;
-    else if (p.variaciones?.some(v => v.codigo_barras?.toLowerCase().includes(q))) score += 120;
-
-    // 3. Prioridad Nombre
-    if (nameLower === q) score += 500;
-    else if (nameLower.startsWith(q)) score += 300;
-    else if (nameLower.includes(q)) score += 100;
-
-    // 4. Barcode parcial
-    if (codeLower.includes(q) && score < 1000) score += 200;
-
-    return { ...p, _score: score };
-  })
-    .filter(p => p._score > 0)
-    .sort((a, b) => {
-      // Primary: Stock presence (Always push 0 items to bottom)
-      const aHasStock = a.cantidad > 0;
-      const bHasStock = b.cantidad > 0;
-      if (aHasStock && !bHasStock) return -1;
-      if (!aHasStock && bHasStock) return 1;
-
-      // Secondary: Search Score
-      if (b._score !== a._score) return b._score - a._score;
-
-      return 0;
-    });
+  }, [productos, busqueda]);
 
   // --- Hotkeys ---
   useEffect(() => {
@@ -1261,6 +1306,7 @@ const RegistrarVentas = () => {
                       if (exactMatch) {
                         if (exactMatch.variaciones && exactMatch.variaciones.length > 0) {
                           setProdSeleccionado(exactMatch);
+
                         } else {
                           agregarAlCarrito(exactMatch, null, cantidadBusqueda);
                           toast.success(`${exactMatch.nombre} añadido`);
@@ -1272,6 +1318,8 @@ const RegistrarVentas = () => {
                       // 3. Selection from results list using selectedIndex
                       if (productosFiltrados.length > 0) {
                         const selectedProd = productosFiltrados[selectedIndex] || productosFiltrados[0];
+                        if (!selectedProd) return; // Safety
+
                         const q = (trimmedBusqueda || "").toLowerCase();
 
                         // INTELLIGENT DETECTION for variations
@@ -1280,7 +1328,7 @@ const RegistrarVentas = () => {
                         if (exactVariation) {
                           agregarAlCarrito(selectedProd, exactVariation, cantidadBusqueda);
                           setBusqueda("");
-                        } else if (selectedProd.variaciones && selectedProd.variaciones.length > 0) {
+                        } else if (selectedProd.variaciones && Array.isArray(selectedProd.variaciones) && selectedProd.variaciones.length > 0) {
                           setProdSeleccionado(selectedProd);
                           setBusqueda("");
                         } else {
@@ -1295,7 +1343,7 @@ const RegistrarVentas = () => {
                 />
 
                 {/* Special Price Indicator */}
-                {clienteId && Object.keys(preciosEspeciales).length > 0 && (
+                {clienteId && Object.keys(preciosEspeciales || {}).length > 0 && (
                   <div className="absolute right-32 top-1.5 px-2 py-1 bg-indigo-600 text-white rounded-lg text-[8px] font-bold animate-bounce shadow-md flex items-center gap-1">
                     <TrendingDown size={10} /> PRECIOS ESPECIALES ACTIVOS
                   </div>
@@ -1471,78 +1519,77 @@ const RegistrarVentas = () => {
                         ))}
                       </div>
                     ) : (
-                      <div className="w-full bg-white dark:bg-slate-900/40 rounded-3xl overflow-hidden shadow-2xl shadow-slate-200/50 dark:shadow-none" style={{ height: 'calc(100vh - 340px)', minHeight: '400px' }}>
-                        <List
-                          height={Math.max(400, window.innerHeight - 340)}
-                          width="100%"
-                          itemCount={productosFiltrados.length}
-                          itemSize={76}
-                        >
-                          {({ index, style }) => {
-                            const prod = productosFiltrados[index];
+                      <div className="w-full bg-white dark:bg-slate-900/40 rounded-3xl overflow-y-auto shadow-2xl shadow-slate-200/50 dark:shadow-none custom-scrollbar" style={{ height: 'calc(100vh - 340px)', minHeight: '400px' }}>
+                        <div className="flex flex-col gap-2 p-2">
+                          {(productosFiltrados || []).slice(0, 80).map((prod, index) => {
                             if (!prod) return null;
                             const isSelected = index === selectedIndex;
-                            const isOutOfStock = prod.cantidad <= 0;
+                            const isOutOfStock = (prod.cantidad || 0) <= 0;
                             const precioData = getPrecioProducto(prod);
 
                             return (
-                              <div style={style} className="px-2 py-1">
-                                <div
-                                  onClick={() => {
-                                    if (isOutOfStock) {
-                                      toast.error("Producto agotado");
-                                      return;
-                                    }
-                                    if (prod.variaciones && prod.variaciones.length > 0) {
-                                      setProdSeleccionado(prod);
-                                    } else {
-                                      agregarAlCarrito(prod, null, cantidadBusqueda);
-                                      setBusqueda("");
-                                      setSelectedIndex(0);
-                                    }
-                                  }}
-                                  onMouseEnter={() => setSelectedIndex(index)}
-                                  className={`grid grid-cols-12 gap-4 items-center p-3 px-4 h-full rounded-xl cursor-pointer transition-all border-l-4 duration-200
-                                    ${isSelected
-                                      ? 'bg-indigo-600 text-white border-indigo-400 shadow-lg shadow-indigo-600/20 translate-x-1'
-                                      : isOutOfStock
-                                        ? 'bg-rose-50/50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-900/30 text-rose-800 dark:text-rose-300'
-                                        : 'bg-white dark:bg-slate-800/40 border-transparent text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60'}
-                                    ${isOutOfStock && !isSelected ? 'opacity-70 grayscale-[0.5]' : ''}
-                                  `}
-                                >
-                                  <div className={`col-span-2 text-[10px] font-black tracking-tight ${isSelected ? 'text-indigo-100' : 'text-slate-400 dark:text-slate-500'}`}>
-                                    {prod.codigo_barras || 'S/N'}
-                                  </div>
-                                  <div className="col-span-6 font-black text-sm uppercase truncate tracking-tight">
-                                    {prod.nombre}
-                                    {isSelected && <span className="ml-2 text-[10px] opacity-60">← Presione ENTER</span>}
-                                  </div>
-                                  <div className="col-span-2 text-center">
-                                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${isSelected
-                                      ? 'bg-white/20 text-white'
-                                      : isOutOfStock
-                                        ? 'bg-rose-100 text-rose-600'
-                                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200/50'
-                                      }`}>
-                                      {isOutOfStock ? 'AGOTADO' : `${prod.cantidad} Unid.`}
+                              <div
+                                key={prod.id || index}
+                                onClick={() => {
+                                  if (isOutOfStock) {
+                                    toast.error("Producto agotado");
+                                    return;
+                                  }
+                                  if (prod.variaciones && prod.variaciones.length > 0) {
+                                    setProdSeleccionado(prod);
+                                  } else {
+                                    agregarAlCarrito(prod, null, cantidadBusqueda);
+                                    setBusqueda("");
+                                    setSelectedIndex(0);
+                                  }
+                                }}
+                                onMouseEnter={() => setSelectedIndex(index)}
+                                className={`grid grid-cols-12 gap-4 items-center p-4 rounded-2xl cursor-pointer transition-all border-l-4 duration-200
+                                  ${isSelected
+                                    ? 'bg-indigo-600 text-white border-indigo-400 shadow-lg shadow-indigo-600/20 translate-x-1'
+                                    : isOutOfStock
+                                      ? 'bg-rose-50/50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-900/30 text-rose-800 dark:text-rose-300'
+                                      : 'bg-white dark:bg-slate-800/40 border-transparent text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60'}
+                                  ${isOutOfStock && !isSelected ? 'opacity-70 grayscale-[0.5]' : ''}
+                                `}
+                              >
+                                <div className={`col-span-2 text-[10px] font-black tracking-tight ${isSelected ? 'text-indigo-100' : 'text-slate-400 dark:text-slate-500'}`}>
+                                  {prod.codigo_barras || 'S/N'}
+                                </div>
+                                <div className="col-span-6 font-black text-sm uppercase truncate tracking-tight">
+                                  {prod.nombre}
+                                  {isSelected && <span className="ml-2 text-[10px] opacity-60">← Presione ENTER</span>}
+                                </div>
+                                <div className="col-span-2 text-center">
+                                  <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${isSelected
+                                    ? 'bg-white/20 text-white'
+                                    : isOutOfStock
+                                      ? 'bg-rose-100 text-rose-600'
+                                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200/50'
+                                    }`}>
+                                    {isOutOfStock ? 'AGOTADO' : `${prod.cantidad || 0} Unid.`}
+                                  </span>
+                                </div>
+                                <div className="col-span-2 text-right flex flex-col items-end">
+                                  <span className="text-[16px] font-black tracking-tighter">
+                                    {formatCurrency(precioData?.precio || 0)}
+                                  </span>
+                                  {precioData?.isPromo && (
+                                    <span className={`text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest ${isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>
+                                      {precioData?.promoLabel}
                                     </span>
-                                  </div>
-                                  <div className="col-span-2 text-right flex flex-col items-end">
-                                    <span className="text-[16px] font-black tracking-tighter">
-                                      {formatCurrency(precioData.precio)}
-                                    </span>
-                                    {precioData.isPromo && (
-                                      <span className={`text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest ${isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>
-                                        {precioData.promoLabel}
-                                      </span>
-                                    )}
-                                  </div>
+                                  )}
                                 </div>
                               </div>
                             );
-                          }}
-                        </List>
+                          })}
+
+                          {productosFiltrados.length > 80 && (
+                            <div className="p-4 text-center opacity-40">
+                              <p className="text-[9px] font-bold uppercase tracking-widest italic">Mostrando los primeros 80 resultados. Refina tu búsqueda...</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

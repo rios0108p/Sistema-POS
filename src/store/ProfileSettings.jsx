@@ -217,23 +217,53 @@ export default function ProfileSettings() {
                         </div>
                         
                         {/* Desktop App Download Card */}
-                        <div className="card-standard p-10 mt-8 flex flex-col md:flex-row items-center justify-between gap-6 border border-indigo-100 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 shadow-xl shadow-indigo-500/5">
-                            <div className="flex items-center gap-5">
-                                <div className="w-16 h-16 bg-indigo-500 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/30">
-                                    <MonitorIcon size={32} className="text-white" />
+                        <div className="card-standard p-8 mt-8 border border-indigo-100 dark:border-indigo-900/40 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 shadow-xl shadow-indigo-500/5">
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="w-14 h-14 bg-indigo-500 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/30">
+                                    <MonitorIcon size={28} className="text-white" />
                                 </div>
                                 <div>
                                     <h3 className="text-lg font-black text-slate-800 dark:text-white uppercase tracking-tight">App Nativa de Escritorio</h3>
-                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest mt-1">Versión Windows Portable (.zip) - Modo Offline</p>
+                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                                        Windows 64-bit · Modo Offline · v1.1.4
+                                    </p>
                                 </div>
                             </div>
-                            <a 
-                                href="/TendoPOS-Portable.zip" 
-                                download="TendoPOS-Portable.zip"
-                                className="flex items-center justify-center gap-3 px-8 py-4 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl shadow-lg transition-all hover:-translate-y-1 font-black text-xs uppercase tracking-widest min-w-[200px]"
-                            >
-                                <DownloadIcon size={18} /> Descargar Portable
-                            </a>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {/* Installer */}
+                                <a
+                                    href="https://tendopos.cloud/downloads/TENDO-POS-Setup-1.1.4.exe"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-3 px-5 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg shadow-indigo-500/20 transition-all hover:-translate-y-0.5 font-black text-[11px] uppercase tracking-widest"
+                                >
+                                    <DownloadIcon size={16} />
+                                    <div className="text-left">
+                                        <div>Instalador (.exe)</div>
+                                        <div className="font-normal opacity-70 text-[9px] normal-case tracking-normal">Recomendado · ~120 MB</div>
+                                    </div>
+                                </a>
+
+                                {/* Portable ZIP */}
+                                <a
+                                    href="https://tendopos.cloud/downloads/TENDO-POS-Portable-1.1.4.zip"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-3 px-5 py-4 bg-slate-700 hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500 text-white rounded-xl shadow-lg transition-all hover:-translate-y-0.5 font-black text-[11px] uppercase tracking-widest"
+                                >
+                                    <DownloadIcon size={16} />
+                                    <div className="text-left">
+                                        <div>Portable (.zip)</div>
+                                        <div className="font-normal opacity-70 text-[9px] normal-case tracking-normal">Sin instalar · misma PC</div>
+                                    </div>
+                                </a>
+                            </div>
+
+                            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-4 flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                                Primer inicio de sesión requiere conexión a internet
+                            </p>
                         </div>
                     </div>
                 </div>

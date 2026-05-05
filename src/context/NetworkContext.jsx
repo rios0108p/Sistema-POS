@@ -20,8 +20,11 @@ export const NetworkProvider = ({ children }) => {
   const [lastSync, setLastSync] = useState(null);
   const [pendingOps, setPendingOps] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(null);
   const previousOnline = useRef(true);
   const intervalRef = useRef(null);
+  // Ref so runCheck always reads the current pendingOps without stale closure
+  const pendingOpsRef = useRef(0);
 
   // Real connectivity check — pings our actual VPS, not just the router
   const checkRealConnectivity = useCallback(async () => {
@@ -51,7 +54,7 @@ export const NetworkProvider = ({ children }) => {
       // Detect transition from offline → online
       if (online && !previousOnline.current) {
         toast.success(
-          `Conexión restaurada — Sincronizando${pendingOps > 0 ? ` ${pendingOps} operaciones pendientes` : ''}...`,
+          `Conexión restaurada — Sincronizando${pendingOpsRef.current > 0 ? ` ${pendingOpsRef.current} operaciones pendientes` : ''}...`,
           {
             duration: 5000,
             icon: '🔄',
@@ -67,6 +70,7 @@ export const NetworkProvider = ({ children }) => {
 
         // Trigger sync (will be connected to syncManager when available)
         window.dispatchEvent(new CustomEvent('network:reconnected'));
+        syncDb(); // Automatically trigger sync on reconnection
       }
 
       // Detect transition from online → offline
@@ -110,6 +114,20 @@ export const NetworkProvider = ({ children }) => {
     };
   }, [checkRealConnectivity]);
 
+  // Handle sync progress events from IPC
+  useEffect(() => {
+      let unsubscribe;
+      if (window.electronAPI?.sync?.onProgress) {
+          unsubscribe = window.electronAPI.sync.onProgress((info) => {
+              setSyncProgress(info);
+          });
+      }
+      return () => { if (unsubscribe) unsubscribe(); };
+  }, []);
+
+  // Keep ref in sync so runCheck can read current value without stale closure
+  useEffect(() => { pendingOpsRef.current = pendingOps; }, [pendingOps]);
+
   // Update pending ops count from localStorage/SQLite
   const updatePendingOps = useCallback((count) => {
     setPendingOps(count);
@@ -127,7 +145,8 @@ export const NetworkProvider = ({ children }) => {
     if (window.electronAPI?.sync?.full) {
       updateSyncStatus(true);
       try {
-        await window.electronAPI.sync.full();
+        const token = localStorage.getItem('token');
+        await window.electronAPI.sync.full(token);
         updateLastSync(new Date().toISOString());
       } catch (error) {
         console.error("Manual sync failed:", error);
@@ -143,6 +162,7 @@ export const NetworkProvider = ({ children }) => {
       lastSync,
       pendingOps,
       isSyncing,
+      syncProgress,
       updatePendingOps,
       updateLastSync,
       updateSyncStatus,
