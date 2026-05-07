@@ -446,15 +446,22 @@ export const categoriasAPI = {
 export const ventasAPI = {
     // Obtener siguiente número de ticket (Optimizado v1.1.4)
     getProximoTicket: async (params = {}) => {
+        // Try server first (online path — has the real MySQL max ticket number)
+        try {
+            const query = new URLSearchParams(params).toString();
+            const response = await fetchWithTimeout(`${API_URL}/ventas/proximo-folio?${query}`, {
+                headers: getAuthHeaders()
+            });
+            if (!response.ok) throw new Error("proximo-folio not supported");
+            return await handleResponse(response);
+        } catch (_) {}
+
+        // Offline fallback for desktop: read from local SQLite
         if (isDesktop() && window.electronAPI?.localDB) {
             try {
                 const { tienda_id } = params;
-                // turno_id intentionally excluded: online mode returns MySQL integer (42)
-                // while offline SQLite stores it as 'mysql-42', causing a mismatch that
-                // resets the counter to 1 after every sale. Tickets are store-sequential.
                 let where = 'is_deleted = 0';
                 if (tienda_id) where += ` AND tienda_id = '${String(tienda_id).replace(/'/g, "''")}'`;
-
                 const result = await window.electronAPI.localDB.getAll('sales', {
                     orderBy: 'ticket_numero DESC',
                     where,
@@ -463,25 +470,18 @@ export const ventasAPI = {
                 const lastTicket = (result && result.length > 0) ? (Number(result[0].ticket_numero) || 0) : 0;
                 return { nextTicket: lastTicket + 1 };
             } catch (e) {
-                console.error("Local ticket fetch failed:", e);
                 return { nextTicket: 1 };
             }
         }
 
+        // Web offline fallback: count from sales history
         try {
-            const query = new URLSearchParams(params).toString();
-            const response = await fetch(`${API_URL}/ventas/proximo-folio?${query}`, { 
-                headers: getAuthHeaders() 
-            });
-            if (!response.ok) throw new Error("Server don't support proximo-folio");
-            return await handleResponse(response);
-        } catch (error) {
-            // Fallback para Web si el servidor no tiene el endpoint
-            console.warn("Falling back to history-based ticket calculation on web");
             const history = await ventasAPI.getAll(params);
             const safeHistory = Array.isArray(history) ? history : [];
             const maxTicket = safeHistory.reduce((max, v) => (v?.ticket_numero > max ? v.ticket_numero : max), 0);
             return { nextTicket: maxTicket + 1 };
+        } catch (_) {
+            return { nextTicket: 1 };
         }
     },
 
