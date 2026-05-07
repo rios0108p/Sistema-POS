@@ -769,55 +769,59 @@ export const turnosAPI = {
         return handleResponse(response);
     },
 
-    // Cerrar turno (Fix #18: desktop branch)
+    // Cerrar turno
     cerrar: async (id, monto_final, notas = '') => {
+        const shiftId = String(id);
+        const isOfflineId = shiftId.startsWith('offline-shift-');
+        let serverResult = null;
+
+        // 1. Close on server first (when online and not an offline-only shift)
+        if (!isOfflineId) {
+            try {
+                const response = await fetchWithTimeout(`${API_URL}/turnos/${id}/cerrar`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ monto_final, notas })
+                });
+                if (response.ok) serverResult = await handleResponse(response);
+            } catch (_) {} // Offline — will sync later via pending status
+        }
+
+        // 2. Close locally in SQLite (desktop only)
         if (isDesktop() && window.electronAPI?.localDB) {
             try {
-                const shiftId = String(id);
-                const existing = await window.electronAPI.localDB.getById('cash_registers', shiftId);
                 const closureData = {
                     monto_final,
                     notas,
                     estado: 'CERRADO',
                     fecha_cierre: new Date().toISOString(),
-                    sync_status: 'pending'
+                    sync_status: serverResult ? 'synced' : 'pending'
                 };
 
+                const existing = await window.electronAPI.localDB.getById('cash_registers', shiftId);
                 if (existing) {
                     await window.electronAPI.localDB.update('cash_registers', shiftId, closureData);
                 } else {
-                    // Fallback: If shift record is missing locally (opened online), create a record for it
-                    console.warn(`Shift ${shiftId} not found locally for closure. Creating placeholder.`);
                     let uId = 1, uNombre = 'Vendedor', tId = 1;
                     try {
-                        const user = JSON.parse(localStorage.getItem('user') || '{}');
-                        if (user.id || user.ID) uId = user.id || user.ID;
-                        if (user.username || user.nombre_usuario) uNombre = user.username || user.nombre_usuario;
-                        if (user.tienda_id) tId = user.tienda_id;
+                        const u = JSON.parse(localStorage.getItem('user') || '{}');
+                        uId = u.id || u.ID || 1;
+                        uNombre = u.username || u.nombre_usuario || 'Vendedor';
+                        tId = u.tienda_id || 1;
                     } catch(e) {}
-
                     await window.electronAPI.localDB.insert('cash_registers', {
-                        id: shiftId,
-                        usuario_id: uId,
-                        usuario_nombre: uNombre,
-                        tienda_id: tId,
-                        ...closureData,
-                        fecha_apertura: new Date().toISOString(), // Mocking start time if unknown
-                        monto_inicial: 0
+                        id: shiftId, usuario_id: uId, usuario_nombre: uNombre, tienda_id: tId,
+                        ...closureData, fecha_apertura: new Date().toISOString(), monto_inicial: 0
                     });
                 }
-                return { success: true, estado: 'CERRADO' };
             } catch (err) {
                 console.error("Error closing shift locally:", err);
-                throw new Error("No se pudo cerrar el turno localmente: " + err.message);
+                if (!serverResult) throw new Error("No se pudo cerrar el turno: " + err.message);
             }
         }
-        const response = await fetch(`${API_URL}/turnos/${id}/cerrar`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ monto_final, notas })
-        });
-        return handleResponse(response);
+
+        // Return server result if available, else a safe offline result
+        return serverResult || { success: true, estado: 'CERRADO', resumen: { diferencia: 0 } };
     }
 };
 
