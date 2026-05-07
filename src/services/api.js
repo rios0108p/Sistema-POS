@@ -641,6 +641,8 @@ export const ventasAPI = {
 };
 
 // ==================== TURNOS ====================
+let _offlineShiftId = null; // prevents race-condition double-creation of offline fallback shifts
+
 export const turnosAPI = {
     // Obtener todos los turnos (para admin o filtrado por usuario)
     getAll: async (range = "", tiendaId = "", startDate = "", endDate = "", usuarioId = "") => {
@@ -687,9 +689,17 @@ export const turnosAPI = {
                 
                 if (turnos.length > 0) return turnos[0];
 
-                // Si estamos offline y no hay turno abierto, forzamos un turno local "Virtual" para no bloquear la venta
+                // Race-condition guard: if another call already started creating the fallback, reuse it
+                if (_offlineShiftId) {
+                    try {
+                        const existing = await window.electronAPI.localDB.getById('cash_registers', _offlineShiftId);
+                        if (existing) return existing;
+                    } catch(e) {}
+                }
+
                 console.warn("No active shift found offline. Auto-creating offline fallback shift...");
                 const fallbackShiftId = `offline-shift-${Date.now()}`;
+                _offlineShiftId = fallbackShiftId;
                 const fallbackShift = {
                     id: fallbackShiftId,
                     usuario_id: usuario_id || 1,
@@ -700,10 +710,10 @@ export const turnosAPI = {
                     fecha_apertura: new Date().toISOString(),
                     sync_status: 'pending'
                 };
-                
+
                 try {
                     await window.electronAPI.localDB.insert('cash_registers', fallbackShift);
-                } catch(e) {} // Ignorar si falla, porque igual devolveremos el mock
+                } catch(e) {}
 
                 return fallbackShift;
             }
@@ -713,8 +723,12 @@ export const turnosAPI = {
 
     // Obtener detalle de turno
     getById: async (id) => {
+        // Offline-only IDs never exist on MySQL — skip API entirely
+        if (String(id).startsWith('offline-shift-') && isDesktop() && window.electronAPI?.localDB) {
+            return await window.electronAPI.localDB.getById('cash_registers', id);
+        }
         try {
-            const response = await fetch(`${API_URL}/turnos/${id}`, { headers: getAuthHeaders() });
+            const response = await fetchWithTimeout(`${API_URL}/turnos/${id}`, { headers: getAuthHeaders() });
             return await handleResponse(response);
         } catch (error) {
             if (isDesktop() && window.electronAPI?.localDB) {
