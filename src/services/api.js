@@ -448,15 +448,17 @@ export const ventasAPI = {
     getProximoTicket: async (params = {}) => {
         if (isDesktop() && window.electronAPI?.localDB) {
             try {
-                const { tienda_id, turno_id } = params;
+                const { tienda_id } = params;
+                // turno_id intentionally excluded: online mode returns MySQL integer (42)
+                // while offline SQLite stores it as 'mysql-42', causing a mismatch that
+                // resets the counter to 1 after every sale. Tickets are store-sequential.
                 let where = 'is_deleted = 0';
                 if (tienda_id) where += ` AND tienda_id = '${String(tienda_id).replace(/'/g, "''")}'`;
-                if (turno_id) where += ` AND turno_id = '${String(turno_id).replace(/'/g, "''")}'`;
 
-                const result = await window.electronAPI.localDB.getAll('sales', { 
-                    orderBy: 'ticket_numero DESC', 
+                const result = await window.electronAPI.localDB.getAll('sales', {
+                    orderBy: 'ticket_numero DESC',
                     where,
-                    limit: 1 
+                    limit: 1
                 });
                 const lastTicket = (result && result.length > 0) ? (Number(result[0].ticket_numero) || 0) : 0;
                 return { nextTicket: lastTicket + 1 };
@@ -575,6 +577,18 @@ export const ventasAPI = {
                         });
                     } catch (itemErr) {
                         console.warn('Error saving sale_item locally:', itemErr.message);
+                    }
+                }
+
+                // Deducir stock en SQLite sin marcar sync_status='pending'
+                // (el servidor deduce stock cuando recibe la venta en el push)
+                if (window.electronAPI.localDB.decrementStock) {
+                    for (const item of lineItems) {
+                        const pid = item.producto_id || item.id || '';
+                        const qty = Number(item.cantidad) || 1;
+                        if (pid && qty > 0) {
+                            window.electronAPI.localDB.decrementStock(String(pid), qty).catch(() => {});
+                        }
                     }
                 }
 
@@ -797,8 +811,15 @@ export const turnosAPI = {
 export const tiendasAPI = {
     // Obtener todas las tiendas
     getAll: async () => {
-        const response = await fetch(`${API_URL}/tiendas`, { headers: getAuthHeaders() });
-        return handleResponse(response);
+        try {
+            const response = await fetchWithTimeout(`${API_URL}/tiendas`, { headers: getAuthHeaders() });
+            return await handleResponse(response);
+        } catch (error) {
+            if (isDesktop() && window.electronAPI?.localDB) {
+                return await window.electronAPI.localDB.getAll('stores', { orderBy: 'nombre ASC' });
+            }
+            throw error;
+        }
     },
 
     // Obtener tienda por ID

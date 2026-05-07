@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     upsert: (table, data) => ipcRenderer.invoke('db:upsert', { table, data }),
     getUserByUsername: (username) => ipcRenderer.invoke('db:getUserByUsername', { username }),
     getUserByPin: (pin) => ipcRenderer.invoke('db:getUserByPin', { pin }),
+    decrementStock: (productId, qty) => ipcRenderer.invoke('db:decrementStock', { productId, qty }),
     getSyncMeta: (key) => ipcRenderer.invoke('db:getSyncMeta', { key }),
     setSyncMeta: (key, value) => ipcRenderer.invoke('db:setSyncMeta', { key, value }),
   },

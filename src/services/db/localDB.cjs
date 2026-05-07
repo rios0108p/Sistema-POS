@@ -34,6 +34,23 @@ class LocalDB {
   constructor() {
     this.db = null;
     this.isInitialized = false;
+    this._tableColumnsCache = {};
+  }
+
+  /**
+   * Returns the set of column names for a table (cached).
+   * Used to strip unknown API fields before INSERT/UPSERT to avoid "no such column" errors.
+   */
+  getTableColumns(tableName) {
+    if (this._tableColumnsCache[tableName]) return this._tableColumnsCache[tableName];
+    try {
+      const rows = this.db.prepare(`PRAGMA table_info("${tableName}")`).all();
+      const cols = new Set(rows.map(r => r.name));
+      this._tableColumnsCache[tableName] = cols;
+      return cols;
+    } catch (e) {
+      return null;
+    }
   }
 
   /**
@@ -256,16 +273,26 @@ class LocalDB {
   }
 
   /**
-   * Upsert — used during pull from MySQL
+   * Upsert — used during pull from MySQL.
+   * Strips any columns not present in the local schema so that extra API fields
+   * (e.g. tienda_id, cantidad_global, created_at) don't cause "no such column" errors.
    */
   upsert(tableName, data) {
+    tableName = this._resolveTableName(tableName);
     const id = data.id || generateUUID();
-    const record = {
+
+    let record = {
       ...data,
       id,
-      sync_status: data.sync_status || 'synced', // Coming from MySQL, so already synced
+      sync_status: data.sync_status || 'synced',
       updated_at: data.updated_at || new Date().toISOString()
     };
+
+    // Filter to only columns that exist in the schema
+    const allowedCols = this.getTableColumns(tableName);
+    if (allowedCols) {
+      record = Object.fromEntries(Object.entries(record).filter(([k]) => allowedCols.has(k)));
+    }
 
     const keys = Object.keys(record);
     const placeholders = keys.map(() => '?').join(', ');
@@ -339,6 +366,29 @@ class LocalDB {
       `SELECT id, nombre, rol FROM users WHERE pin_seguridad = ? AND is_deleted = 0 LIMIT 1`
     );
     return stmt.get(String(pin));
+  }
+
+  /**
+   * Decrement product stock locally without marking sync_status='pending'.
+   * The sale record (not the product) is what gets pushed to MySQL; the server
+   * handles the authoritative stock decrement. This keeps local stock accurate
+   * for the cashier during offline sessions without causing double-deduction on sync.
+   */
+  decrementStock(productId, qty) {
+    const n = Number(qty);
+    if (!n || n <= 0) return;
+    // Try by local id (e.g. 'mysql-5') first, then by numeric mysql_id
+    this.db.prepare(
+      `UPDATE products SET cantidad = MAX(0, COALESCE(cantidad, 0) - ?)
+       WHERE id = ? AND is_deleted = 0`
+    ).run(n, String(productId));
+
+    if (!isNaN(productId)) {
+      this.db.prepare(
+        `UPDATE products SET cantidad = MAX(0, COALESCE(cantidad, 0) - ?)
+         WHERE mysql_id = ? AND is_deleted = 0`
+      ).run(n, Number(productId));
+    }
   }
 
   /**

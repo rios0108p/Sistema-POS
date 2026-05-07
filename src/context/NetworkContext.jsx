@@ -148,6 +148,8 @@ export const NetworkProvider = ({ children }) => {
         const token = localStorage.getItem('token');
         await window.electronAPI.sync.full(token);
         updateLastSync(new Date().toISOString());
+        // Notify POS components to reload data (products, etc.) from SQLite
+        window.dispatchEvent(new CustomEvent('pos:sync-complete'));
       } catch (error) {
         console.error("Manual sync failed:", error);
       } finally {

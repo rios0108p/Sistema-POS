@@ -85,7 +85,7 @@ export const AuthProvider = ({ children }) => {
         const userWithSession = { ...userData, sessionStart: new Date().toISOString() };
         setUser(userWithSession);
         setIsOfflineMode(false);
-        
+
         localStorage.setItem('user', JSON.stringify(userWithSession));
         localStorage.setItem('token', token);
         localStorage.setItem('isOfflineMode', 'false');
@@ -99,6 +99,15 @@ export const AuthProvider = ({ children }) => {
         if (turno) {
             setTurnoActivo(turno);
             localStorage.setItem('turnoActivo', JSON.stringify(turno));
+        }
+
+        // Populate local SQLite on first login so offline mode has data
+        if (window.electronAPI?.sync?.full) {
+            setTimeout(() => {
+                window.electronAPI.sync.full(token)
+                    .then(() => window.dispatchEvent(new CustomEvent('pos:sync-complete')))
+                    .catch(() => {});
+            }, 1500);
         }
     };
 

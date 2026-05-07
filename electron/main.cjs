@@ -184,6 +184,12 @@ function registerIPCHandlers() {
     return localDB.getUserByPin(pin);
   });
 
+  ipcMain.handle('db:decrementStock', (event, { productId, qty }) => {
+    if (!localDB) return { success: false };
+    localDB.decrementStock(productId, qty);
+    return { success: true };
+  });
+
   ipcMain.handle('db:getSyncMeta', (event, { key }) => {
     if (!localDB) return null;
     return localDB.getSyncMeta(key);

@@ -168,6 +168,20 @@ const RegistrarVentas = () => {
     }
   }, [user, turnoActivo, selectedTiendaId, isClosingProcess]);
 
+  // Reload products from SQLite after a background sync completes (e.g. on reconnection or login)
+  useEffect(() => {
+    const onSyncComplete = () => {
+      const tid = selectedTiendaId;
+      const fetcher = tid ? tiendasAPI.getProductos(tid) : productosAPI.getAll();
+      fetcher.then(raw => {
+        const prods = (raw || []).map(p => normalizeProduct(p)).filter(Boolean);
+        if (prods.length > 0) setProductos(prods);
+      }).catch(() => {});
+    };
+    window.addEventListener('pos:sync-complete', onSyncComplete);
+    return () => window.removeEventListener('pos:sync-complete', onSyncComplete);
+  }, [selectedTiendaId]);
+
   // UX-002: Confirmación al intentar salir con productos en el carrito
   useEffect(() => {
     const handleBeforeUnload = (e) => {
