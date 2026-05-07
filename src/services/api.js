@@ -459,9 +459,10 @@ export const ventasAPI = {
         // Offline fallback for desktop: read from local SQLite
         if (isDesktop() && window.electronAPI?.localDB) {
             try {
-                const { tienda_id } = params;
+                const { tienda_id, turno_id } = params;
                 let where = 'is_deleted = 0';
                 if (tienda_id) where += ` AND tienda_id = '${String(tienda_id).replace(/'/g, "''")}'`;
+                if (turno_id) where += ` AND turno_id = '${String(turno_id).replace(/'/g, "''")}'`;
                 const result = await window.electronAPI.localDB.getAll('sales', {
                     orderBy: 'ticket_numero DESC',
                     where,
