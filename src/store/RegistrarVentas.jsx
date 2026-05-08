@@ -200,18 +200,24 @@ const RegistrarVentas = () => {
   const loadTurnoActivo = async () => {
     try {
       const turno = await turnosAPI.getActivo(user?.id, selectedTiendaId);
-      updateTurnoActivo(turno);
-      if (turno) {
-        // Fetch detailed breakdown for the active shift
-        const detail = await turnosAPI.getById(turno.id);
+      // Only update if we got a real server turno — never overwrite with an offline-shift
+      // created here, because that would lose the real turno ID from localStorage
+      if (turno && !String(turno.id).startsWith('offline-shift-')) {
+        updateTurnoActivo(turno);
+      }
+      const activeTurno = turno || turnoActivo;
+      if (activeTurno) {
+        const detail = await turnosAPI.getById(activeTurno.id);
         setTurnoDetalleRaw(detail);
       } else {
         setTurnoDetalleRaw(null);
       }
     } catch (error) {
       console.log("No hay turno activo");
-      updateTurnoActivo(null);
-      setTurnoDetalleRaw(null);
+      if (!turnoActivo) {
+        updateTurnoActivo(null);
+        setTurnoDetalleRaw(null);
+      }
     }
   };
 

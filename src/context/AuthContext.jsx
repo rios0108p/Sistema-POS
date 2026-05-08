@@ -41,9 +41,18 @@ export const AuthProvider = ({ children }) => {
                         try { parsedUser.permisos = JSON.parse(parsedUser.permisos); } catch(e) { parsedUser.permisos = {}; }
                     }
                     parsedUser.permisos = parsedUser.permisos || {};
-                    
+
                     setUser(parsedUser);
                     setIsOfflineMode(wasOffline);
+
+                    // Re-sync on startup so SQLite stays fresh even after app restarts
+                    if (window.electronAPI?.sync?.full) {
+                        setTimeout(() => {
+                            window.electronAPI.sync.full(token)
+                                .then(() => window.dispatchEvent(new CustomEvent('pos:sync-complete')))
+                                .catch(() => {});
+                        }, 2000);
+                    }
                 } catch (e) {
                     console.error("❌ Error parseando usuario:", e);
                     logout();
@@ -99,6 +108,16 @@ export const AuthProvider = ({ children }) => {
         if (turno) {
             setTurnoActivo(turno);
             localStorage.setItem('turnoActivo', JSON.stringify(turno));
+            // Persist active shift to SQLite immediately so offline mode can find it
+            if (window.electronAPI?.localDB && turno.id) {
+                const shiftRecord = {
+                    ...turno,
+                    id: turno.uuid || `mysql-${turno.id}`,
+                    mysql_id: turno.id,
+                    sync_status: 'synced'
+                };
+                window.electronAPI.localDB.upsert('cash_registers', shiftRecord).catch(() => {});
+            }
         }
 
         // Populate local SQLite on first login so offline mode has data

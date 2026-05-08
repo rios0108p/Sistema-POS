@@ -9,7 +9,7 @@ const migrations = [
   {
     version: 1,
     description: 'Initial schema — all base tables',
-    up: (db) => {
+    up: (_db) => {
       // The base schema is applied via schema.sql during init
       // This migration just marks it as applied
       console.log('  Migration 1: Base schema applied');
@@ -63,6 +63,51 @@ const migrations = [
         CREATE INDEX IF NOT EXISTS idx_compras_sync ON compras(sync_status);
       `);
       console.log('  Migration 3: compras table created');
+    }
+  },
+  {
+    version: 4,
+    description: 'Add pedidos and pedido_detalles tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS pedidos (
+          id TEXT PRIMARY KEY,
+          mysql_id INTEGER,
+          tienda_id TEXT,
+          tienda_nombre TEXT,
+          usuario_solicitante_id TEXT,
+          usuario_nombre TEXT,
+          estado TEXT DEFAULT 'PENDIENTE',
+          subtotal REAL NOT NULL DEFAULT 0,
+          total REAL NOT NULL DEFAULT 0,
+          envio REAL DEFAULT 0,
+          notas TEXT,
+          fecha_programada TEXT,
+          sync_status TEXT DEFAULT 'pending',
+          local_created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS pedido_detalles (
+          id TEXT PRIMARY KEY,
+          mysql_id INTEGER,
+          pedido_id TEXT NOT NULL,
+          producto_id TEXT NOT NULL,
+          producto_nombre TEXT,
+          cantidad INTEGER NOT NULL,
+          precio_unitario REAL NOT NULL,
+          subtotal REAL NOT NULL,
+          sync_status TEXT DEFAULT 'pending',
+          local_created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          is_deleted INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_pedidos_tienda ON pedidos(tienda_id);
+        CREATE INDEX IF NOT EXISTS idx_pedidos_estado ON pedidos(estado);
+        CREATE INDEX IF NOT EXISTS idx_pedidos_sync ON pedidos(sync_status);
+        CREATE INDEX IF NOT EXISTS idx_pedido_detalles_pedido ON pedido_detalles(pedido_id);
+      `);
+      console.log('  Migration 4: pedidos + pedido_detalles tables created');
     }
   }
 ];

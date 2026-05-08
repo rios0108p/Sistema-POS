@@ -112,11 +112,11 @@ const StoreOrders = () => {
     }
   }, [searchParams, productosDisponibles]);
 
-  // Auto-refresh every 30 seconds for real-time updates
+  // Auto-refresh every 30 seconds, only when online
   useEffect(() => {
     const interval = setInterval(() => {
-      obtenerPedidos();
-    }, 30000); // 30 seconds
+      if (navigator.onLine) obtenerPedidos();
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
 

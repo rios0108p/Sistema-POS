@@ -45,6 +45,33 @@ router.get('/', checkTienda, async (req, res) => {
     }
 });
 
+// Obtener siguiente número de ticket por turno
+router.get('/proximo-folio', checkTienda, async (req, res) => {
+    try {
+        const { tienda_id, turno_id } = req.query;
+        const tiendaId = tienda_id || req.user?.tienda_id;
+
+        let query = 'SELECT MAX(ticket_numero) as max_ticket FROM ventas WHERE 1=1';
+        const params = [];
+
+        if (tiendaId) {
+            query += ' AND tienda_id = ?';
+            params.push(tiendaId);
+        }
+        if (turno_id) {
+            query += ' AND turno_id = ?';
+            params.push(turno_id);
+        }
+
+        const [result] = await db.query(query, params);
+        const nextTicket = (result[0]?.max_ticket || 0) + 1;
+        res.json({ nextTicket });
+    } catch (error) {
+        console.error('Error al obtener próximo folio:', error);
+        res.status(500).json({ error: 'Error al obtener próximo folio' });
+    }
+});
+
 // Obtener detalle de una venta
 router.get('/:id', async (req, res) => {
     try {
