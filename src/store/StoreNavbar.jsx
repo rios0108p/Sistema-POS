@@ -195,8 +195,8 @@ const StoreNavbar = ({ onMenuToggle, sidebarOpen, isCollapsed }) => {
       <div className="flex items-center gap-2 sm:gap-6">
         {!window.electronAPI?.isDesktop && user?.rol?.toLowerCase() === 'admin' && (
           <a
-            href="/TendoPOS-Portable.zip"
-            download="TendoPOS-Portable.zip"
+            href="/downloads/TENDO-POS-Setup-1.1.4.exe"
+            download="TENDO-POS-Setup-1.1.4.exe"
             className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-black text-[10px] uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all active:scale-95"
           >
             <Printer size={14} className="rotate-180" />
