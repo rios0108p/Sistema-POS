@@ -45,74 +45,6 @@ export const NetworkProvider = ({ children }) => {
     }
   }, []);
 
-  // Main connectivity monitoring loop
-  useEffect(() => {
-    const runCheck = async () => {
-      const online = await checkRealConnectivity();
-      setIsOnline(online);
-
-      // Detect transition from offline → online
-      if (online && !previousOnline.current) {
-        toast.success(
-          `Conexión restaurada — Sincronizando${pendingOpsRef.current > 0 ? ` ${pendingOpsRef.current} operaciones pendientes` : ''}...`,
-          {
-            duration: 5000,
-            icon: '🔄',
-            style: {
-              borderRadius: '20px',
-              background: '#065f46',
-              color: '#fff',
-              fontWeight: '700',
-              fontSize: '12px'
-            }
-          }
-        );
-
-        // Trigger sync (will be connected to syncManager when available)
-        window.dispatchEvent(new CustomEvent('network:reconnected'));
-        syncDb(); // Automatically trigger sync on reconnection
-      }
-
-      // Detect transition from online → offline
-      if (!online && previousOnline.current) {
-        toast('Modo Offline activado — Las operaciones se guardan localmente', {
-          duration: 4000,
-          icon: '📡',
-          style: {
-            borderRadius: '20px',
-            background: '#7c2d12',
-            color: '#fff',
-            fontWeight: '700',
-            fontSize: '12px'
-          }
-        });
-      }
-
-      previousOnline.current = online;
-    };
-
-    // Initial check
-    runCheck();
-
-    // Periodic checks every 30 seconds
-    intervalRef.current = setInterval(runCheck, CHECK_INTERVAL);
-
-    // Also listen for browser online/offline events as quick triggers
-    const handleOnline = () => runCheck();
-    const handleOffline = () => {
-      setIsOnline(false);
-      previousOnline.current = false;
-    };
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      clearInterval(intervalRef.current);
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [checkRealConnectivity]);
 
 
   // Handle sync progress events from IPC
@@ -229,6 +161,75 @@ export const NetworkProvider = ({ children }) => {
     const timer = setTimeout(startupSync, 3000);
     return () => clearTimeout(timer);
   }, [checkRealConnectivity]);
+
+  // Main connectivity monitoring loop
+  useEffect(() => {
+    const runCheck = async () => {
+      const online = await checkRealConnectivity();
+      setIsOnline(online);
+
+      // Detect transition from offline → online
+      if (online && !previousOnline.current) {
+        toast.success(
+          `Conexión restaurada — Sincronizando${pendingOpsRef.current > 0 ? ` ${pendingOpsRef.current} operaciones pendientes` : ''}...`,
+          {
+            duration: 5000,
+            icon: '🔄',
+            style: {
+              borderRadius: '20px',
+              background: '#065f46',
+              color: '#fff',
+              fontWeight: '700',
+              fontSize: '12px'
+            }
+          }
+        );
+
+        // Trigger sync (will be connected to syncManager when available)
+        window.dispatchEvent(new CustomEvent('network:reconnected'));
+        syncDb(); // Automatically trigger sync on reconnection
+      }
+
+      // Detect transition from online → offline
+      if (!online && previousOnline.current) {
+        toast('Modo Offline activado — Las operaciones se guardan localmente', {
+          duration: 4000,
+          icon: '📡',
+          style: {
+            borderRadius: '20px',
+            background: '#7c2d12',
+            color: '#fff',
+            fontWeight: '700',
+            fontSize: '12px'
+          }
+        });
+      }
+
+      previousOnline.current = online;
+    };
+
+    // Initial check
+    runCheck();
+
+    // Periodic checks every 30 seconds
+    intervalRef.current = setInterval(runCheck, CHECK_INTERVAL);
+
+    // Also listen for browser online/offline events as quick triggers
+    const handleOnline = () => runCheck();
+    const handleOffline = () => {
+      setIsOnline(false);
+      previousOnline.current = false;
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      clearInterval(intervalRef.current);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [checkRealConnectivity, syncDb]);
 
   return (
     <NetworkContext.Provider value={{

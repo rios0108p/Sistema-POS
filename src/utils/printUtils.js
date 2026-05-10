@@ -115,7 +115,7 @@ function generateTicketHtml(data) {
   html, body {
     font-family: 'Courier New', Courier, monospace;
     font-size: 8pt;
-    width: 48mm;
+    width: 38mm; /* Reducido de 48mm para mover el contenido de la derecha 1cm a la izquierda */
     margin: 0;
     padding: 2mm 0 0 0;
     color: #000;
@@ -238,7 +238,7 @@ function generateCorteHtml(data) {
   html, body {
     font-family: 'Courier New', Courier, monospace;
     font-size: 8pt;
-    width: 48mm;
+    width: 38mm;
     margin: 0;
     padding: 2mm 0 0 0;
     color: #000;
@@ -354,7 +354,7 @@ function generateMovimientoHtml(data) {
 <style>
   @page { size: 58mm auto; margin: 0; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  html, body { font-family:'Courier New',Courier,monospace; font-size:8pt; width:48mm; margin:0; padding:2mm 0 0 0; color:#000; }
+  html, body { font-family:'Courier New',Courier,monospace; font-size:8pt; width:38mm; margin:0; padding:2mm 0 0 0; color:#000; }
   .center { text-align:center; }
   .logo { text-align:center; font-size:11pt; font-weight:900; margin-bottom:1mm; }
   .biz-sub { text-align:center; font-size:7pt; line-height:1.5; }

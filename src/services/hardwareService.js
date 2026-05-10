@@ -39,7 +39,7 @@ const hardwareService = {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data),
-                signal: AbortSignal.timeout(2000)
+                signal: (AbortSignal && AbortSignal.timeout) ? AbortSignal.timeout(2000) : undefined
             });
             if (response.ok) {
                 toast.success("Ticket impreso (Bridge Local)");
