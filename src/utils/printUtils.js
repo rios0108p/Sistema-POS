@@ -191,7 +191,22 @@ function generateTicketHtml(data) {
 
   <div class="row"><span>Subtotal:</span><span>${fmt(subtotal)}</span></div>
   ${descuento > 0 ? `<div class="row"><span>Descuento:</span><span>-${fmt(descuento)}</span></div>` : ''}
-  ${impuestos > 0 ? `<div class="row"><span>Impuestos:</span><span>${fmt(impuestos)}</span></div>` : ''}
+  
+  ${(() => {
+    const desglose = data.venta?.impuestos_desglose 
+        ? (typeof data.venta.impuestos_desglose === 'string' ? JSON.parse(data.venta.impuestos_desglose) : data.venta.impuestos_desglose)
+        : null;
+    
+    if (desglose && Object.keys(desglose).length > 0) {
+        return Object.entries(desglose).map(([label, info]) => `
+            <div class="row"><span>${label}:</span><span>${fmt(info.total)}</span></div>
+        `).join('');
+    } else if (impuestos > 0) {
+        return `<div class="row"><span>Impuestos:</span><span>${fmt(impuestos)}</span></div>`;
+    }
+    return '';
+  })()}
+
   <div class="total-line"><span>TOTAL:</span><span>${fmt(total)}</span></div>
 
   <hr class="hr">
