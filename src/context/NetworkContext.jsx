@@ -114,6 +114,7 @@ export const NetworkProvider = ({ children }) => {
     };
   }, [checkRealConnectivity]);
 
+
   // Handle sync progress events from IPC
   useEffect(() => {
       let unsubscribe;
@@ -128,7 +129,41 @@ export const NetworkProvider = ({ children }) => {
   // Keep ref in sync so runCheck can read current value without stale closure
   useEffect(() => { pendingOpsRef.current = pendingOps; }, [pendingOps]);
 
-  // Update pending ops count from localStorage/SQLite
+  // Poll pending ops count from SQLite every 15 seconds
+  useEffect(() => {
+    const readPending = async () => {
+      try {
+        if (window.electronAPI?.localDB?.countPendingOps) {
+          const count = await window.electronAPI.localDB.countPendingOps();
+          setPendingOps(count || 0);
+          pendingOpsRef.current = count || 0;
+        }
+      } catch (e) {
+        // SQLite not ready yet
+      }
+    };
+
+    readPending();
+    const timer = setInterval(readPending, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Also refresh pending count when sync completes
+  useEffect(() => {
+    const handler = async () => {
+      try {
+        if (window.electronAPI?.localDB?.countPendingOps) {
+          const count = await window.electronAPI.localDB.countPendingOps();
+          setPendingOps(count || 0);
+          pendingOpsRef.current = count || 0;
+        }
+      } catch (e) {}
+    };
+    window.addEventListener('pos:sync-complete', handler);
+    return () => window.removeEventListener('pos:sync-complete', handler);
+  }, []);
+
+  // Update pending ops count (called externally)
   const updatePendingOps = useCallback((count) => {
     setPendingOps(count);
   }, []);
@@ -157,6 +192,43 @@ export const NetworkProvider = ({ children }) => {
       }
     }
   }, [updateSyncStatus, updateLastSync]);
+
+  // Sync on startup: populate SQLite so offline mode has data from day one.
+  // Placed after all useCallback declarations to avoid temporal dead zone.
+  useEffect(() => {
+    if (!window.electronAPI?.sync?.full) return;
+
+    const startupSync = async () => {
+      try {
+        const online = await checkRealConnectivity();
+        if (!online) return;
+
+        // Only sync if never done or > 30 min ago
+        const lastSyncRaw = window.electronAPI?.localDB?.getSyncMeta
+          ? await window.electronAPI.localDB.getSyncMeta('last_sync_timestamp')
+          : null;
+
+        const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
+        const lastSyncMs = lastSyncRaw ? new Date(lastSyncRaw).getTime() : 0;
+        if (lastSyncMs > thirtyMinAgo) return;
+
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        setIsSyncing(true);
+        await window.electronAPI.sync.full(token);
+        setLastSync(new Date().toISOString());
+        window.dispatchEvent(new CustomEvent('pos:sync-complete'));
+      } catch (e) {
+        console.warn('Startup sync failed (will retry on reconnect):', e.message);
+      } finally {
+        setIsSyncing(false);
+      }
+    };
+
+    const timer = setTimeout(startupSync, 3000);
+    return () => clearTimeout(timer);
+  }, [checkRealConnectivity]);
 
   return (
     <NetworkContext.Provider value={{

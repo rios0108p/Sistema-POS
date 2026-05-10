@@ -157,7 +157,7 @@ export default function Dashboard() {
     { label: "Nueva Venta", icon: ShoppingCart, path: "/store/ventas", color: "from-emerald-500 to-teal-600" },
     { label: "Añadir Producto", icon: PlusCircle, path: "/store/add-product", color: "from-blue-500 to-indigo-600" },
     { label: "Inventario", icon: LayoutGrid, path: "/store/inventarios", color: "from-purple-500 to-pink-600" },
-    { label: "Ver Reportes", icon: FileText, path: "/store/ventas", color: "from-orange-500 to-red-600" },
+    { label: "Ver Reportes", icon: FileText, path: "/store/reportes", color: "from-orange-500 to-red-600" },
   ];
 
   const cards = [

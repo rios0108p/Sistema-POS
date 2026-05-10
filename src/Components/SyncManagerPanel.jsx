@@ -84,8 +84,13 @@ const SyncManagerPanel = ({ isOpen, onClose }) => {
               </div>
             </div>
             {pendingOps > 0 && isOnline && (
+              <div className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-1 rounded-md">
+                <UploadCloud size={12} /> Listo para sync
+              </div>
+            )}
+            {pendingOps > 0 && !isOnline && (
               <div className="animate-pulse flex items-center gap-1.5 text-[10px] font-bold text-amber-500 bg-amber-50 dark:bg-amber-500/10 px-2 py-1 rounded-md">
-                <AlertCircle size={12} /> Esperando red...
+                <AlertCircle size={12} /> Sin conexión
               </div>
             )}
             {pendingOps === 0 && (

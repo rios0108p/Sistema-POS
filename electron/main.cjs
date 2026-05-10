@@ -134,11 +134,12 @@ function registerIPCHandlers() {
 
   ipcMain.handle('db:getPendingSummary', () => {
     if (!localDB) return [];
-    
+
     const tables = [
       'products', 'product_variants', 'categories', 'customers',
-      'suppliers', 'sales', 'sale_items', 'inventory_movements',
-      'expenses', 'cash_registers', 'cash_register_movements'
+      'suppliers', 'sales', 'inventory_movements',
+      'expenses', 'cash_registers', 'cash_register_movements',
+      'pedidos', 'pedido_detalles', 'compras'
     ];
 
     const summary = [];
@@ -228,13 +229,30 @@ function registerIPCHandlers() {
   ipcMain.handle('print-silent', async (event, { html, printerName }) => {
     console.log(`Solicitud de impresión silenciosa para: ${printerName || 'Impresora predeterminada'}`);
 
+    // 302px = 80mm a 96 DPI — el viewport debe coincidir con el ancho del papel
     let printWindow = new BrowserWindow({
       show: false,
+      width: 302,
+      height: 1200,
       webPreferences: { nodeIntegration: false, contextIsolation: true }
     });
 
     try {
       await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+
+      // Medir la altura real del contenido con fallback seguro
+      let heightMicrons = 200000; // 200mm por defecto
+      try {
+        await new Promise(r => setTimeout(r, 400));
+        const scrollHeight = await printWindow.webContents.executeJavaScript(
+          'document.documentElement.scrollHeight'
+        );
+        // 1px @ 96dpi = 264.58 micrones
+        heightMicrons = Math.max(Math.ceil(scrollHeight * 264.58), 50000);
+        console.log(`Altura medida: ${scrollHeight}px → ${heightMicrons} micrones`);
+      } catch (jsErr) {
+        console.warn('No se midió altura, usando 200mm por defecto:', jsErr.message);
+      }
 
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -245,7 +263,8 @@ function registerIPCHandlers() {
           silent: true,
           deviceName: printerName || '',
           printBackground: true,
-          margins: { marginType: 'none' }
+          margins: { marginType: 'none' },
+          pageSize: { width: 80000, height: heightMicrons }
         }, (success, errorType) => {
           clearTimeout(timeout);
           if (success) { console.log('Impresión exitosa'); resolve(); }
@@ -258,9 +277,9 @@ function registerIPCHandlers() {
       console.error('Fallo en impresión nativa:', error);
       return { success: false, error: error.message };
     } finally {
-      if (printWindow && !printWindow.isDestroyed()) { 
-        printWindow.close(); 
-        printWindow = null; 
+      if (printWindow && !printWindow.isDestroyed()) {
+        printWindow.close();
+        printWindow = null;
       }
     }
   });

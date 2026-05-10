@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   nombre_usuario TEXT NOT NULL,
   nombre TEXT DEFAULT '',
   email TEXT,
-  password TEXT NOT NULL,
+  password TEXT DEFAULT '',
   rol TEXT DEFAULT 'vendedor',
   tienda_id INTEGER,
   turno_trabajo TEXT DEFAULT 'COMPLETO',
@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS sale_items (
 CREATE TABLE IF NOT EXISTS inventory_movements (
   id TEXT PRIMARY KEY,
   mysql_id INTEGER,
-  producto_id TEXT NOT NULL,
+  producto_id TEXT,
   tienda_id TEXT,
   cantidad INTEGER NOT NULL,
   tipo TEXT NOT NULL,

@@ -132,6 +132,13 @@ const Inventario = () => {
 
   const { data: tiendasData = [] } = useTiendas(user);
 
+  // Auto-seleccionar la primera tienda cuando cargan (evita mostrar Almacén Central por defecto)
+  useEffect(() => {
+    if (tiendasData.length > 0 && !tiendaSeleccionada) {
+      setTiendaSeleccionada(tiendasData[0].id);
+    }
+  }, [tiendasData]);
+
   const { realizarAjuste } = useInventarioMutations();
 
   const [variacionesModal, setVariacionesModal] = useState({ open: false, producto: null });
@@ -347,11 +354,7 @@ const Inventario = () => {
           <div className="grid grid-cols-2 sm:flex flex-wrap gap-2 w-full">
             <button
               onClick={() => setTiendaSeleccionada("")}
-              className={`px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border
-                ${tiendaSeleccionada === ""
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
-                  : 'bg-slate-50 dark:bg-slate-900 text-slate-400 border-transparent hover:border-slate-200'}
-              `}
+              className="hidden"
             >
               ALMACÉN CENTRAL
             </button>

@@ -30,6 +30,7 @@ const ManageTiendas = lazy(() => import("./store/ManageTiendas"));
 const MovementHistory = lazy(() => import("./store/MovementHistory"));
 const ManagePromociones = lazy(() => import("./store/ManagePromociones"));
 const ManageGastos = lazy(() => import("./store/ManageGastos"));
+const Reportes = lazy(() => import("./store/Reportes"));
 
 
 // Simple Error Boundary component
@@ -159,6 +160,7 @@ function AppContent() {
               <Route path="promociones" element={<ProtectedRoute requiredPermission="configuracion"><ManagePromociones /></ProtectedRoute>} />
               <Route path="gastos" element={<ProtectedRoute requiredPermission="gastos"><ManageGastos /></ProtectedRoute>} />
               <Route path="history" element={<ProtectedRoute requiredPermission="ventas"><MovementHistory /></ProtectedRoute>} />
+              <Route path="reportes" element={<ProtectedRoute requiredPermission="dashboard"><Reportes /></ProtectedRoute>} />
             </Route>
           </Routes>
         </Suspense>

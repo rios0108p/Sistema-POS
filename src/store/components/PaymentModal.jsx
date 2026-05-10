@@ -231,24 +231,48 @@ export default function PaymentModal({ isOpen, onClose, total, onConfirm, isWhol
                         {/* 3. Input & Calculation Area */}
                         <div className="flex-1 flex flex-col justify-start">
                             {currentMethod === 'Mixto' ? (
-                                <div className="w-full max-w-xl mx-auto grid grid-cols-2 gap-3 pb-2">
-                                    {[
-                                        { id: 'Efectivo', label: 'EFECTIVO' },
-                                        { id: 'Tarjeta', label: 'TARJETA' },
-                                        { id: 'Transferencia', label: 'TRANSF.' },
-                                        { id: 'Dólar', label: 'USD' }
-                                    ].map(m => (
-                                        <div key={m.id} className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border-2 border-transparent focus-within:border-indigo-500 transition-all">
-                                            <label className="text-[9px] font-black text-slate-400 mb-1 uppercase tracking-widest block opacity-80">{m.label}</label>
-                                            <input
-                                                type="number"
-                                                value={mixedAmounts[m.id]}
-                                                onChange={e => setMixedAmounts({ ...mixedAmounts, [m.id]: e.target.value })}
-                                                className="w-full bg-transparent border-none text-3xl font-black text-slate-800 dark:text-white outline-none"
-                                                placeholder="0.00"
-                                            />
+                                <div className="w-full max-w-xl mx-auto flex flex-col gap-3 pb-2">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {[
+                                            { id: 'Efectivo', label: 'EFECTIVO' },
+                                            { id: 'Tarjeta', label: 'TARJETA' },
+                                            { id: 'Transferencia', label: 'TRANSF.' },
+                                            { id: 'Dólar', label: 'USD' }
+                                        ].map(m => (
+                                            <div key={m.id} className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border-2 border-transparent focus-within:border-indigo-500 transition-all">
+                                                <label className="text-[9px] font-black text-slate-400 mb-1 uppercase tracking-widest block opacity-80">{m.label}</label>
+                                                <input
+                                                    type="number"
+                                                    value={mixedAmounts[m.id]}
+                                                    onChange={e => setMixedAmounts({ ...mixedAmounts, [m.id]: e.target.value })}
+                                                    className="w-full bg-transparent border-none text-3xl font-black text-slate-800 dark:text-white outline-none"
+                                                    placeholder="0.00"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {/* Summary bar */}
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div className="bg-slate-100 dark:bg-slate-800 rounded-xl p-3 text-center">
+                                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">TOTAL</p>
+                                            <p className="text-lg font-black text-slate-700 dark:text-slate-200">${total.toFixed(2)}</p>
                                         </div>
-                                    ))}
+                                        <div className="bg-slate-100 dark:bg-slate-800 rounded-xl p-3 text-center">
+                                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">INGRESADO</p>
+                                            <p className="text-lg font-black text-slate-700 dark:text-slate-200">${mixedTotal.toFixed(2)}</p>
+                                        </div>
+                                        {mixedTotal >= total ? (
+                                            <div className="bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 rounded-xl p-3 text-center">
+                                                <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mb-1">CAMBIO</p>
+                                                <p className="text-lg font-black text-emerald-600 dark:text-emerald-400">${(mixedTotal - total).toFixed(2)}</p>
+                                            </div>
+                                        ) : (
+                                            <div className="bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-700 rounded-xl p-3 text-center">
+                                                <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest mb-1">FALTA</p>
+                                                <p className="text-lg font-black text-rose-600 dark:text-rose-400">${(total - mixedTotal).toFixed(2)}</p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="w-full max-w-xl mx-auto flex flex-col items-center pb-2">

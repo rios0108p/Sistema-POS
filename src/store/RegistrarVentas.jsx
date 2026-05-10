@@ -168,15 +168,26 @@ const RegistrarVentas = () => {
     }
   }, [user, turnoActivo, selectedTiendaId, isClosingProcess]);
 
-  // Reload products from SQLite after a background sync completes (e.g. on reconnection or login)
+  // Reload products after a background sync completes — prefer SQLite (freshest data post-sync)
   useEffect(() => {
-    const onSyncComplete = () => {
-      const tid = selectedTiendaId;
-      const fetcher = tid ? tiendasAPI.getProductos(tid) : productosAPI.getAll();
-      fetcher.then(raw => {
+    const onSyncComplete = async () => {
+      try {
+        let raw = [];
+        if (window.electronAPI?.localDB) {
+          const sqliteProds = await window.electronAPI.localDB.getAll('products', { orderBy: 'nombre ASC' });
+          if (sqliteProds && sqliteProds.length > 0) {
+            raw = sqliteProds;
+          } else {
+            const tid = selectedTiendaId;
+            raw = await (tid ? tiendasAPI.getProductos(tid) : productosAPI.getAll());
+          }
+        } else {
+          const tid = selectedTiendaId;
+          raw = await (tid ? tiendasAPI.getProductos(tid) : productosAPI.getAll());
+        }
         const prods = (raw || []).map(p => normalizeProduct(p)).filter(Boolean);
         if (prods.length > 0) setProductos(prods);
-      }).catch(() => {});
+      } catch (e) {}
     };
     window.addEventListener('pos:sync-complete', onSyncComplete);
     return () => window.removeEventListener('pos:sync-complete', onSyncComplete);
@@ -252,7 +263,22 @@ const RegistrarVentas = () => {
 
       // 1. Cargar productos (Tienda o Global)
       let prodsRaw = [];
-      if (selectedTiendaId) {
+      if (!isOnline && window.electronAPI?.localDB) {
+        // Offline: try SQLite first (populated after first online sync)
+        try {
+          const sqliteProds = await window.electronAPI.localDB.getAll('products', { orderBy: 'nombre ASC' });
+          if (sqliteProds && sqliteProds.length > 0) {
+            prodsRaw = sqliteProds;
+          } else {
+            // SQLite empty — fall back to workbox cache until user syncs once online
+            prodsRaw = selectedTiendaId
+              ? await tiendasAPI.getProductos(selectedTiendaId)
+              : await productosAPI.getAll();
+          }
+        } catch (e) {
+          prodsRaw = [];
+        }
+      } else if (selectedTiendaId) {
         prodsRaw = await tiendasAPI.getProductos(selectedTiendaId);
       } else {
         prodsRaw = await productosAPI.getAll();
@@ -347,16 +373,14 @@ const RegistrarVentas = () => {
           // Update cart prices if they already have items
           if (cart.length > 0) {
             setCart(prev => prev.map(item => {
-              const rule = mapping[item.id];
-              // Strict multiple rule: qty must be >= min AND a perfect multiple
-              if (rule && item.cantidad >= rule.min_cantidad && item.cantidad % rule.min_cantidad === 0) {
+              const rule = mapping[item.id] || mapping[String(item.id)] || mapping[parseInt(item.id, 10)];
+              if (rule && item.cantidad >= (rule.min_cantidad || 1)) {
                 return { ...item, precio: rule.precio, isWholesale: true };
               }
-              // If no special price or condition not met, find original product price
               const prod = productos.find(p => p.id === item.id);
               if (prod) {
-                const regularPrice = prod.precio_oferta || prod.precio_venta;
-                return { ...item, precio: Number(regularPrice), isWholesale: false };
+                // Sin precio especial: usar precio_venta regular (ignorar precio_oferta aunque exista)
+                return { ...item, precio: Number(prod.precio_venta), isWholesale: false };
               }
               return item;
             }));
@@ -368,13 +392,12 @@ const RegistrarVentas = () => {
         });
     } else {
       setPreciosEspeciales({});
-      // Reset cart to regular prices if customer is cleared
+      // Al quitar cliente: restaurar precio_venta regular (no precio_oferta)
       if (cart.length > 0) {
         setCart(prev => prev.map(item => {
           const prod = productos.find(p => p.id === item.id);
           if (prod) {
-            const regularPrice = prod.precio_oferta || prod.precio_venta;
-            return { ...item, precio: Number(regularPrice) };
+            return { ...item, precio: Number(prod.precio_venta), isWholesale: false };
           }
           return item;
         }));
@@ -795,7 +818,14 @@ const RegistrarVentas = () => {
 
       let response = await ventasAPI.create(payload);
 
-      toast.success("¡Venta Exitosa!");
+      if (response?.status === 'saved_locally' && !isOnline) {
+        toast.success("¡Venta guardada! (Sin conexión — se subirá al recuperar internet)", {
+          duration: 5000,
+          style: { background: '#92400e', color: '#fff', fontWeight: '700', fontSize: '12px', borderRadius: '20px' }
+        });
+      } else {
+        toast.success("¡Venta Exitosa!");
+      }
 
       // --- Apertura de Gaveta (Hardware) ---
       const tieneEfectivo = pagos.some(p => p.metodo === 'Efectivo');

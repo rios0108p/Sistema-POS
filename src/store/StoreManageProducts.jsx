@@ -60,6 +60,10 @@ const StoreManageProducts = () => {
     try {
       const data = await tiendasAPI.getAll();
       setTiendas(data || []);
+      // Auto-seleccionar primera tienda si no hay ninguna seleccionada
+      if (!tiendaSeleccionada && data?.length > 0) {
+        setTiendaSeleccionada(data[0].id);
+      }
     } catch (error) {
       console.error("Error al cargar tiendas:", error);
     }
@@ -102,7 +106,8 @@ const StoreManageProducts = () => {
         if (payload.precio_oferta === null) payload.precio_oferta = "";
         if (payload.proveedor_id === null) payload.proveedor_id = "";
         if (payload.codigo_barras === null) payload.codigo_barras = "";
-        await executeProduct('update', payload, productoId);
+        const r1 = await executeProduct('update', payload, productoId);
+        if (r1?.mode === 'api') await productosAPI.update(producto.datosOriginales.id || productoId, payload);
       }
 
       setProductos(prev => prev.map(p => p.id === productoId ? { ...p, enStock: nuevoEstado } : p));
@@ -122,7 +127,8 @@ const StoreManageProducts = () => {
       if (payload.proveedor_id === null) payload.proveedor_id = "";
       if (payload.codigo_barras === null) payload.codigo_barras = "";
 
-      await executeProduct('update', payload, productoId);
+      const r2 = await executeProduct('update', payload, productoId);
+      if (r2?.mode === 'api') await productosAPI.update(producto.datosOriginales.id || productoId, payload);
       setProductos(prev => prev.map(p => p.id === productoId ? { ...p, ofertaActiva: nuevoEstado } : p));
       toast.success("Estado de oferta actualizado");
     } catch (error) {
@@ -421,7 +427,14 @@ const StoreManageProducts = () => {
         impuestos: formularioEdicion.impuestos || [],
       };
 
-      await executeProduct('update', dataAEnviar, editandoId);
+      const result = await executeProduct('update', dataAEnviar, editandoId);
+
+      // En modo web, executeProduct no llama la API — hay que hacerlo directamente
+      if (result?.mode === 'api') {
+        const apiId = original.id || editandoId;
+        await productosAPI.update(apiId, dataAEnviar);
+      }
+
       toast.success("Producto actualizado correctamente");
       setEditandoId(null);
       await obtenerProductos();
@@ -567,11 +580,7 @@ const StoreManageProducts = () => {
               <div className="flex flex-wrap gap-2 w-full">
                 <button
                   onClick={() => setTiendaSeleccionada("")}
-                  className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2
-                                    ${tiendaSeleccionada === ""
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-500/20'
-                      : 'bg-white dark:bg-slate-900 text-slate-400 border-slate-100 dark:border-slate-800 hover:border-indigo-200'}
-                                `}
+                  className="hidden"
                 >
                   ALMACÉN CENTRAL
                 </button>

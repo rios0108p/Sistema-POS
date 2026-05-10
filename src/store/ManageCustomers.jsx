@@ -217,29 +217,35 @@ export default function ManageCustomers() {
 
     const handleAddSpecialPrice = async () => {
         if (!newSpecial.producto_id || !newSpecial.precio_especial) return toast.error("Completa los datos");
-        // Bug #16: Validate special price is lower than regular price
         const prod = productos.find(p => p.id == newSpecial.producto_id);
         if (prod && parseFloat(newSpecial.precio_especial) >= parseFloat(prod.precio_venta)) {
             return toast.error(`El precio especial debe ser menor al precio regular ($${prod.precio_venta})`);
         }
         try {
-            await executeSpecialPrice('insert', {
+            const result = await executeSpecialPrice('insert', {
                 cliente_id: selectedClient.id,
                 ...newSpecial
             });
+            // En modo web, executeSpecialPrice no llama la API — hay que llamarla directamente
+            if (result?.mode === 'api') {
+                await clientesAPI.savePrecioEspecial(selectedClient.id, newSpecial);
+            }
             toast.success("Precio asignado");
             setNewSpecial({ producto_id: "", precio_especial: "", min_cantidad: 1 });
-            // Refresh list
             const specials = await clientesAPI.getPreciosEspeciales(selectedClient.id);
             setPreciosEspeciales(specials);
         } catch (error) {
-            toast.error("Error operando precios especiales");
+            console.error(error);
+            toast.error("Error al guardar precio especial");
         }
     };
 
     const handleDeleteSpecialPrice = async (productoId) => {
         try {
-            await executeSpecialPrice('delete', { producto_id: productoId, cliente_id: selectedClient.id }, `${selectedClient.id}_${productoId}`);
+            const result = await executeSpecialPrice('delete', { producto_id: productoId, cliente_id: selectedClient.id }, `${selectedClient.id}_${productoId}`);
+            if (result?.mode === 'api') {
+                await clientesAPI.deletePrecioEspecial(selectedClient.id, productoId);
+            }
             setPreciosEspeciales(preciosEspeciales.filter(p => p.producto_id !== productoId));
             toast.success("Precio eliminado");
         } catch (error) {
@@ -263,14 +269,21 @@ export default function ManageCustomers() {
 
         setIsSavingAbono(true);
         try {
-            await executeAbono('insert', {
+            const result = await executeAbono('insert', {
                 cliente_id: selectedClient.id,
                 ...abonoData,
                 usuario_id: user?.id
             });
+            // En modo web, executeAbono no llama la API — hay que llamarla directamente
+            if (result?.mode === 'api') {
+                await clientesAPI.registrarAbono(selectedClient.id, {
+                    ...abonoData,
+                    usuario_id: user?.id
+                });
+            }
             toast.success("Abono registrado correctamente");
             setIsAbonoModalOpen(false);
-            fetchClientes(); // Refrescar saldos
+            fetchClientes();
         } catch (error) {
             toast.error(error.message || "Error al registrar abono");
         } finally {
@@ -393,120 +406,93 @@ export default function ManageCustomers() {
                     </div>
                 ) : (
                     filteredClientes.map((cliente) => (
-                        <div key={cliente.id} className="group relative overflow-hidden card-standard p-8 hover:shadow-2xl hover:shadow-indigo-500/10 transition-all duration-500">
-                            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-700"></div>
+                        <div key={cliente.id} className="group relative overflow-hidden bg-white dark:bg-slate-900 rounded-[1.5rem] border border-slate-100 dark:border-slate-800 hover:shadow-xl hover:shadow-indigo-500/8 hover:border-indigo-100 dark:hover:border-indigo-900 transition-all duration-300">
+                            {/* Top color strip */}
+                            <div className="h-1.5 w-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-t-[1.5rem]"></div>
 
-                            <div className="flex justify-between items-start mb-6 relative">
-                                <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center font-bold text-xl border border-indigo-100 dark:border-indigo-800 shadow-sm">
-                                    {cliente.nombre.charAt(0).toUpperCase()}
+                            <div className="p-6">
+                                {/* Header row */}
+                                <div className="flex items-start justify-between mb-5">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-600 text-white rounded-2xl flex items-center justify-center font-black text-lg shadow-lg shadow-indigo-500/20">
+                                            {cliente.nombre.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <h3 className="font-black text-slate-800 dark:text-white text-base uppercase tracking-tight leading-none">{cliente.nombre}</h3>
+                                            <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-[0.2em] mt-0.5">Cliente Preferencial</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                        <button onClick={() => handleOpenModal(cliente)} className="w-8 h-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl transition-all flex items-center justify-center">
+                                            <Edit size={15} />
+                                        </button>
+                                        {isAdmin && (
+                                            <button onClick={() => handleDelete(cliente.id)} className="w-8 h-8 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all flex items-center justify-center">
+                                                <Trash2 size={15} />
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
-                                    <button
-                                        onClick={() => handleOpenModal(cliente)}
-                                        className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-xl transition-all shadow-md active:scale-90"
-                                    >
-                                        <Edit size={18} />
-                                    </button>
-                                    {isAdmin && (
-                                    <button
-                                        onClick={() => handleDelete(cliente.id)}
-                                        className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-xl transition-all shadow-md active:scale-90"
-                                    >
-                                        <Trash2 size={18} />
-                                    </button>
+
+                                {/* Info */}
+                                <div className="space-y-2 text-[11px] text-slate-500 dark:text-slate-400 font-bold mb-4">
+                                    {cliente.telefono && (
+                                        <div className="flex items-center gap-2"><Phone size={12} className="text-slate-300 shrink-0" /><a href={`tel:${cliente.telefono}`} className="hover:text-indigo-600 font-mono">{cliente.telefono}</a></div>
+                                    )}
+                                    {cliente.direccion && (
+                                        <div className="flex items-start gap-2"><MapPin size={12} className="text-slate-300 shrink-0 mt-0.5" /><span className="line-clamp-1 opacity-70">{cliente.direccion}</span></div>
                                     )}
                                 </div>
-                            </div>
 
-                            <h3 className="font-bold text-slate-800 dark:text-white text-xl mb-1 uppercase tracking-tighter leading-none">{cliente.nombre}</h3>
-                            <p className="text-[10px] font-bold text-indigo-500/50 dark:text-indigo-400/50 uppercase tracking-[0.15em] mb-6">Cliente Preferencial</p>
-
-                            <div className="space-y-3.5 text-xs text-slate-500 dark:text-slate-400 font-bold ml-1">
-                                {cliente.nit_dpi && (
-                                    <div className="flex items-center gap-3">
-                                        <CreditCard size={14} className="text-slate-300" />
-                                        <span className="tracking-tighter">ID: <span className="text-slate-800 dark:text-slate-200">{cliente.nit_dpi}</span></span>
-                                    </div>
-                                )}
-                                {cliente.email && (
-                                    <div className="flex items-center gap-3">
-                                        <Mail size={14} className="text-slate-300" />
-                                        <a href={`mailto:${cliente.email}`} className="hover:text-indigo-600 font-medium truncate">{cliente.email}</a>
-                                    </div>
-                                )}
-                                {cliente.telefono && (
-                                    <div className="flex items-center gap-3">
-                                        <Phone size={14} className="text-slate-300" />
-                                        <a href={`tel:${cliente.telefono}`} className="hover:text-indigo-600 font-mono">{cliente.telefono}</a>
-                                    </div>
-                                )}
-                                {cliente.direccion && (
-                                    <div className="flex items-start gap-3">
-                                        <MapPin size={14} className="mt-0.5 flex-shrink-0 text-slate-300" />
-                                        <span className="line-clamp-2 leading-relaxed opacity-60 font-medium">{cliente.direccion}</span>
-                                    </div>
-                                )}
-                                <div className="pt-2">
-                                    <div className={`flex items-center justify-between p-2.5 rounded-xl border ${cliente.credito_habilitado ? 'bg-indigo-50/50 border-indigo-100 dark:bg-indigo-900/20 dark:border-indigo-800' : 'bg-slate-50 border-slate-100 opacity-50 dark:bg-slate-800 dark:border-slate-700'}`}>
-                                        <div className="flex items-center gap-2">
-                                            <div className={`w-2 h-2 rounded-full ${cliente.credito_habilitado ? 'bg-indigo-500' : 'bg-slate-300'}`}></div>
-                                            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Crédito</span>
+                                {/* Credit bar */}
+                                {cliente.credito_habilitado ? (() => {
+                                    const deuda = Number(cliente.saldo_deudor || 0);
+                                    const limite = Number(cliente.limite_credito || 0);
+                                    const disponible = limite - deuda;
+                                    const pctUsado = limite > 0 ? Math.min((deuda / limite) * 100, 100) : 0;
+                                    return (
+                                        <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-3 mb-4">
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Crédito</span>
+                                                <span className={`text-[9px] font-black ${deuda > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>Deuda: ${deuda.toFixed(2)}</span>
+                                            </div>
+                                            <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                <div className={`h-full rounded-full transition-all ${pctUsado > 80 ? 'bg-rose-500' : pctUsado > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${pctUsado}%` }}></div>
+                                            </div>
+                                            <div className="flex justify-between mt-1">
+                                                <span className="text-[8px] text-slate-400 font-bold">Disponible: ${disponible.toFixed(2)}</span>
+                                                <span className="text-[8px] text-slate-400 font-bold">Límite: ${limite.toFixed(2)}</span>
+                                            </div>
                                         </div>
-                                        <div className="text-right">
-                                            {cliente.credito_habilitado ? (
-                                                <>
-                                                    {(() => {
-                                                        const disponible = (cliente.limite_credito || 0) - (cliente.saldo_deudor || 0);
-                                                        return (
-                                                            <>
-                                                                <p className={`text-[10px] font-black leading-none ${disponible < 0 ? 'text-rose-600' : 'text-indigo-600 dark:text-indigo-400'}`}>
-                                                                    DISP: ${disponible.toFixed(2)}
-                                                                </p>
-                                                                <p className="text-[8px] font-bold text-slate-400 mt-0.5">DEUDA: ${Number(cliente.saldo_deudor || 0).toFixed(2)}</p>
-                                                            </>
-                                                        );
-                                                    })()}
-                                                </>
-                                            ) : (
-                                                <span className="text-[9px] font-black text-slate-300">INACTIVO</span>
-                                            )}
-                                        </div>
+                                    );
+                                })() : (
+                                    <div className="bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2 mb-4 flex items-center gap-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
+                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sin crédito habilitado</span>
                                     </div>
-                                </div>
-                            </div>
-
-                            <div className="mt-8 pt-6 border-t dark:border-slate-700/50 flex flex-wrap gap-2 justify-end">
-                                {isAdmin && (
-                                    <>
-                                        <button
-                                            onClick={() => handleOpenSpecialPrices(cliente)}
-                                            className="px-4 py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40 text-[9px] font-bold uppercase text-amber-600 dark:text-amber-400 hover:bg-amber-100 transition-all rounded-xl tracking-widest flex items-center gap-2 shadow-sm"
-                                        >
-                                            <DollarSign size={14} /> PRECIOS ESPECIALES
-                                        </button>
-                                        <button
-                                            onClick={() => handleOpenAbono(cliente)}
-                                            className="px-4 py-2.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800/40 text-[9px] font-bold uppercase text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 transition-all rounded-xl tracking-widest flex items-center gap-2 shadow-sm"
-                                        >
-                                            <Banknote size={14} /> REGISTRAR ABONO
-                                        </button>
-                                    </>
                                 )}
-                                <button
-                                    onClick={() => handleViewHistory(cliente)}
-                                    className="px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border dark:border-slate-700 text-[9px] font-bold uppercase text-indigo-600 dark:text-indigo-400 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all rounded-xl tracking-widest flex items-center gap-2 shadow-sm group/btn"
-                                >
-                                    AUDITAR ACTIVIDAD
-                                    <ChevronRight size={14} className="group-hover/btn:translate-x-1 transition-transform" />
-                                </button>
-                                {isAdmin && (
-                                    <button
-                                        onClick={() => { setSelectedClient(cliente); setIsIdCardOpen(true); }}
-                                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white border-2 border-indigo-500 rounded-xl text-[9px] font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg active:scale-95"
-                                    >
-                                        <CreditCard size={14} /> TARJETA DIGITAL
+
+                                {/* Actions */}
+                                <div className="grid grid-cols-2 gap-2">
+                                    {isAdmin && (
+                                        <>
+                                            <button onClick={() => handleOpenSpecialPrices(cliente)} className="h-9 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100 transition-all rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5">
+                                                <DollarSign size={12} /> Precios
+                                            </button>
+                                            <button onClick={() => handleOpenAbono(cliente)} className="h-9 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 transition-all rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5">
+                                                <Banknote size={12} /> Abono
+                                            </button>
+                                        </>
+                                    )}
+                                    <button onClick={() => handleViewHistory(cliente)} className={`h-9 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 ${isAdmin ? '' : 'col-span-1'}`}>
+                                        <Clock size={12} /> Historial
                                     </button>
-                                )}
+                                    {isAdmin && (
+                                        <button onClick={() => { setSelectedClient(cliente); setIsIdCardOpen(true); }} className="h-9 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-500/20 active:scale-95 transition-all">
+                                            <CreditCard size={12} /> Tarjeta
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     ))
@@ -516,106 +502,125 @@ export default function ManageCustomers() {
             {/* Modal Tarjeta Digital */}
             {isIdCardOpen && selectedClient && (
                 <div className="modal-overlay">
-                    <div className="modal-container w-full max-w-md p-0 overflow-hidden flex flex-col">
-                        <div className="modal-header px-8 py-6 flex justify-between items-center bg-slate-50 dark:bg-slate-800">
-                            <h2 className="text-xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter">Tarjeta de Cliente</h2>
-                            <button onClick={() => setIsIdCardOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
-                        </div>
-
-                        <div className="p-8 flex flex-col items-center gap-8 bg-slate-50/50 dark:bg-slate-900/50">
-                            {/* Tarjeta para Captura */}
-                            <div
-                                id="customer-id-card"
-                                style={{
-                                    backgroundColor: storeConfig.card_primary_color || '#4f46e5',
-                                    backgroundImage: storeConfig.card_bg_image
-                                        ? `url(${getImageUrl(storeConfig.card_bg_image)})`
-                                        : `linear-gradient(135deg, ${storeConfig.card_primary_color || '#4f46e5'} 0%, ${storeConfig.card_secondary_color || '#3730a3'} 100%)`,
-                                    backgroundSize: 'cover',
-                                    backgroundPosition: 'center',
-                                    padding: '2rem',
-                                    borderRadius: '1.5rem',
-                                    color: storeConfig.card_text_color || 'white',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    gap: '1.5rem',
-                                    width: '100%',
-                                    maxWidth: '320px',
-                                    position: 'relative',
-                                    overflow: 'hidden',
-                                    boxShadow: '0 20px 40px -10px rgba(0, 0, 0, 0.3)',
-                                    minHeight: '440px',
-                                    aspectRatio: 'auto',
-                                    fontFamily: 'system-ui, sans-serif'
-                                }}
-                            >
-                                {/* Overlay para fondo imagen */}
-                                {storeConfig.card_bg_image && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.2)', zIndex: 1 }}></div>}
-
-                                {/* Decorative Circles */}
-                                <div style={{ position: 'absolute', top: '-60px', right: '-60px', width: '150px', height: '150px', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '50%', zIndex: 2 }}></div>
-                                <div style={{ position: 'absolute', bottom: '-40px', left: '-40px', width: '120px', height: '120px', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '50%', zIndex: 2 }}></div>
-
-                                {/* Header Section */}
-                                <div style={{ textAlign: 'center', zIndex: 10, marginTop: '1rem' }}>
-                                    <p style={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.2em', opacity: 0.9, marginBottom: '0.5rem' }}>
-                                        {storeConfig.card_title || 'Cliente Preferencial'}
-                                    </p>
-                                    <h3 style={{ fontSize: '2rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '-0.025em', lineHeight: 1, textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>
-                                        {selectedClient.nombre}
-                                    </h3>
-                                </div>
-
-                                {/* White Box for Codes */}
-                                <div style={{
-                                    backgroundColor: 'white',
-                                    padding: '1.5rem',
-                                    borderRadius: '1.25rem',
-                                    width: '100%',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    gap: '1rem',
-                                    zIndex: 10,
-                                    boxShadow: '0 10px 25px -5px rgba(0,0,0,0.2)'
-                                }}>
-                                    <QRCodeCanvas value={selectedClient.codigo_barras || selectedClient.nit_dpi || selectedClient.id.toString()} size={120} />
-                                    <div style={{ width: '100%', display: 'flex', justifyContent: 'center', marginTop: '0.5rem' }}>
-                                        <Barcode
-                                            value={selectedClient.codigo_barras || selectedClient.nit_dpi || selectedClient.id.toString()}
-                                            width={1.5}
-                                            height={40}
-                                            fontSize={12}
-                                            background="transparent"
-                                            margin={0}
-                                            displayValue={true}
-                                        />
+                    <div className="w-full max-w-md rounded-[2rem] overflow-hidden shadow-2xl bg-white dark:bg-slate-900 flex flex-col">
+                        {/* Header */}
+                        <div className="relative bg-gradient-to-br from-violet-600 via-violet-500 to-indigo-600 px-8 pt-7 pb-10 overflow-hidden shrink-0">
+                            <div className="absolute inset-0 opacity-10">
+                                <div className="absolute top-4 right-4 w-32 h-32 rounded-full bg-white"></div>
+                                <div className="absolute -bottom-6 -left-6 w-40 h-40 rounded-full bg-white"></div>
+                            </div>
+                            <div className="relative flex items-start justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-lg">
+                                        <CreditCard size={26} className="text-white" />
+                                    </div>
+                                    <div>
+                                        <p className="text-white/60 text-[9px] font-black uppercase tracking-[0.3em] mb-0.5">Tarjeta Digital</p>
+                                        <h2 className="text-xl font-black text-white uppercase tracking-tight leading-none">{selectedClient.nombre}</h2>
+                                        <p className="text-white/50 text-[10px] font-bold uppercase tracking-widest mt-1 font-mono">{selectedClient.codigo_barras || selectedClient.nit_dpi || 'Sin ID'}</p>
                                     </div>
                                 </div>
+                                <button onClick={() => setIsIdCardOpen(false)} className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all"><X size={18} /></button>
+                            </div>
+                        </div>
 
-                                {/* Footer Info */}
-                                <div style={{ textAlign: 'center', zIndex: 10, marginBottom: '1rem' }}>
-                                    <p style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.8 }}>ID ÚNICO</p>
-                                    <p style={{ fontSize: '14px', fontWeight: 'bold', letterSpacing: '0.1em', fontFamily: 'monospace' }}>
-                                        {selectedClient.codigo_barras || selectedClient.nit_dpi || 'N/A'}
-                                    </p>
+                        <div className="p-6 -mt-4 flex flex-col items-center gap-5 bg-slate-50/50 dark:bg-slate-900/50">
+                            {/* Card preview container */}
+                            <div className="w-full flex items-center justify-center">
+                                <div
+                                    id="customer-id-card"
+                                    style={{
+                                        backgroundColor: storeConfig.card_primary_color || '#4f46e5',
+                                        backgroundImage: storeConfig.card_bg_image
+                                            ? `url(${getImageUrl(storeConfig.card_bg_image)})`
+                                            : `linear-gradient(135deg, ${storeConfig.card_primary_color || '#4f46e5'} 0%, ${storeConfig.card_secondary_color || '#3730a3'} 100%)`,
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center',
+                                        padding: '1.75rem',
+                                        borderRadius: '1.5rem',
+                                        color: storeConfig.card_text_color || 'white',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: '1.25rem',
+                                        width: '100%',
+                                        maxWidth: '300px',
+                                        position: 'relative',
+                                        overflow: 'hidden',
+                                        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)',
+                                        minHeight: '420px',
+                                        fontFamily: 'system-ui, sans-serif'
+                                    }}
+                                >
+                                    {storeConfig.card_bg_image && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.25)', zIndex: 1 }}></div>}
+                                    <div style={{ position: 'absolute', top: '-50px', right: '-50px', width: '140px', height: '140px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '50%', zIndex: 2 }}></div>
+                                    <div style={{ position: 'absolute', bottom: '-30px', left: '-30px', width: '110px', height: '110px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '50%', zIndex: 2 }}></div>
+
+                                    {/* Header Section */}
+                                    <div style={{ textAlign: 'center', zIndex: 10, width: '100%' }}>
+                                        <div style={{ display: 'inline-block', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: '100px', padding: '4px 14px', marginBottom: '0.75rem' }}>
+                                            <p style={{ fontSize: '9px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.2em', opacity: 1 }}>
+                                                {storeConfig.card_title || 'Cliente Preferencial'}
+                                            </p>
+                                        </div>
+                                        <h3 style={{ fontSize: '1.6rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '-0.02em', lineHeight: 1.1, textShadow: '0 2px 12px rgba(0,0,0,0.25)', wordBreak: 'break-word' }}>
+                                            {selectedClient.nombre}
+                                        </h3>
+                                    </div>
+
+                                    {/* White Box for Codes */}
+                                    <div style={{
+                                        backgroundColor: 'white',
+                                        padding: '1.25rem 1rem',
+                                        borderRadius: '1.25rem',
+                                        width: '100%',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        gap: '0.75rem',
+                                        zIndex: 10,
+                                        boxShadow: '0 12px 30px -5px rgba(0,0,0,0.25)'
+                                    }}>
+                                        <QRCodeCanvas value={selectedClient.codigo_barras || selectedClient.nit_dpi || selectedClient.id.toString()} size={110} level="M" />
+                                        <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+                                            <Barcode
+                                                value={selectedClient.codigo_barras || selectedClient.nit_dpi || selectedClient.id.toString()}
+                                                width={1.4}
+                                                height={36}
+                                                fontSize={11}
+                                                background="transparent"
+                                                margin={0}
+                                                displayValue={true}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Footer */}
+                                    <div style={{ textAlign: 'center', zIndex: 10, width: '100%' }}>
+                                        <p style={{ fontSize: '8px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.15em', opacity: 0.7, marginBottom: '0.25rem' }}>ID Único de Membresía</p>
+                                        <p style={{ fontSize: '13px', fontWeight: '900', letterSpacing: '0.12em', fontFamily: 'monospace', opacity: 0.95 }}>
+                                            {selectedClient.codigo_barras || selectedClient.nit_dpi || `CLI-${selectedClient.id}`}
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4 w-full">
+                            {/* Action buttons */}
+                            <div className="grid grid-cols-2 gap-3 w-full">
                                 <button
                                     onClick={() => downloadIdCard(selectedClient.nombre)}
-                                    className="btn-secondary py-4 w-full justify-center"
+                                    className="h-12 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm"
                                 >
-                                    Descargar Imagen
+                                    <FileText size={15} className="text-slate-400" />
+                                    Descargar
                                 </button>
                                 <button
                                     onClick={() => handleShareWhatsApp(selectedClient)}
-                                    className="btn-primary py-4 w-full justify-center bg-emerald-500 hover:bg-emerald-600 border-none shadow-lg shadow-emerald-500/20"
+                                    className="h-12 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest shadow-lg shadow-emerald-500/25 transition-all flex items-center justify-center gap-2 active:scale-95"
                                 >
-                                    Enviar WhatsApp
+                                    <Phone size={15} />
+                                    WhatsApp
                                 </button>
                             </div>
                         </div>
@@ -624,171 +629,264 @@ export default function ManageCustomers() {
             )}
 
             {/* Modal Precios Especiales */}
-            {isSpecialPriceOpen && (
+            {isSpecialPriceOpen && (() => {
+                const prodSeleccionado = productos.find(p => p.id == newSpecial.producto_id);
+                const precioRegular = prodSeleccionado ? parseFloat(prodSeleccionado.precio_venta) : 0;
+                const precioEspecialNum = parseFloat(newSpecial.precio_especial) || 0;
+                const ahorro = precioRegular > 0 && precioEspecialNum > 0 ? ((precioRegular - precioEspecialNum) / precioRegular * 100).toFixed(0) : 0;
+                return (
                 <div className="modal-overlay">
-                    <div className="modal-container w-full max-w-2xl max-h-[85vh] flex flex-col p-0">
-                        <div className="modal-header px-8 py-6 bg-amber-50/50 dark:bg-amber-900/10 flex justify-between items-center border-b dark:border-amber-900/40">
-                            <div>
-                                <h2 className="text-xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter">Precios Especiales</h2>
-                                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Cliente: {selectedClient?.nombre}</p>
+                    <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-[2rem] overflow-hidden shadow-2xl bg-white dark:bg-slate-900">
+
+                        {/* Header degradado */}
+                        <div className="relative bg-gradient-to-br from-indigo-600 to-violet-700 px-8 pt-8 pb-10 overflow-hidden">
+                            <div className="absolute inset-0 opacity-10">
+                                <div className="absolute top-4 right-4 w-32 h-32 rounded-full bg-white"></div>
+                                <div className="absolute -bottom-6 -left-6 w-40 h-40 rounded-full bg-white"></div>
                             </div>
-                            <button onClick={() => setIsSpecialPriceOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
+                            <div className="relative flex items-start justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-lg">
+                                        <DollarSign size={26} className="text-white" />
+                                    </div>
+                                    <div>
+                                        <p className="text-white/60 text-[9px] font-black uppercase tracking-[0.3em] mb-0.5">Precios Especiales</p>
+                                        <h2 className="text-xl font-black text-white uppercase tracking-tight leading-none">{selectedClient?.nombre}</h2>
+                                        <p className="text-white/50 text-[10px] font-bold uppercase tracking-widest mt-1">{preciosEspeciales.length} precio{preciosEspeciales.length !== 1 ? 's' : ''} configurado{preciosEspeciales.length !== 1 ? 's' : ''}</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setIsSpecialPriceOpen(false)} className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all">
+                                    <X size={18} />
+                                </button>
+                            </div>
                         </div>
 
-                        <div className="p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1">
-                            {/* Formulario Añadir */}
-                            <div className="bg-slate-50 dark:bg-slate-900/50 p-6 rounded-3xl border dark:border-slate-700/50">
-                                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Asignar Nuevo Precio</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                                    <div className="md:col-span-5">
-                                        <label className="label-standard ml-1">Producto</label>
+                        {/* Cuerpo */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-5 -mt-4">
+
+                            {/* Formulario */}
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden">
+                                <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-100 dark:border-slate-700">
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em]">Asignar Nuevo Precio</p>
+                                </div>
+                                <div className="p-5 space-y-4">
+                                    {/* Selector de producto */}
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Producto</label>
                                         <select
-                                            className="select-standard"
+                                            className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                                             value={newSpecial.producto_id}
                                             onChange={e => setNewSpecial({ ...newSpecial, producto_id: e.target.value })}
                                         >
-                                            <option value="">Seleccionar...</option>
+                                            <option value="">Seleccionar producto...</option>
                                             {productos.map(p => (
-                                                <option key={p.id} value={p.id}>{p.nombre} (${p.precio_venta})</option>
+                                                <option key={p.id} value={p.id}>{p.nombre} — ${p.precio_venta}</option>
                                             ))}
                                         </select>
                                     </div>
-                                    <div className="md:col-span-3">
-                                        <label className="label-standard ml-1">Min. (Mayoreo)</label>
-                                        <input
-                                            type="number"
-                                            placeholder="1"
-                                            className="input-standard"
-                                            value={newSpecial.min_cantidad || ""}
-                                            onChange={e => setNewSpecial({ ...newSpecial, min_cantidad: e.target.value === "" ? null : Number(e.target.value) })}
-                                        />
-                                    </div>
-                                    <div className="md:col-span-4 flex items-end gap-2">
-                                        <div className="flex-1">
-                                            <label className="label-standard ml-1">Precio Especial</label>
+
+                                    {/* Preview precio regular */}
+                                    {prodSeleccionado && (
+                                        <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 dark:bg-slate-900/40 rounded-xl">
+                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Precio regular:</span>
+                                            <span className="text-sm font-black text-slate-700 dark:text-slate-200">${precioRegular.toFixed(2)}</span>
+                                            {ahorro > 0 && (
+                                                <span className="ml-auto text-[9px] font-black text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded-lg uppercase tracking-widest">
+                                                    -{ahorro}% descuento
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Cant. Mínima (Mayoreo)</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                placeholder="1"
+                                                className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                                value={newSpecial.min_cantidad || ""}
+                                                onChange={e => setNewSpecial({ ...newSpecial, min_cantidad: e.target.value === "" ? null : Number(e.target.value) })}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Precio Especial ($)</label>
                                             <input
                                                 type="number"
                                                 placeholder="0.00"
-                                                className="input-standard"
+                                                className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                                                 value={newSpecial.precio_especial || ""}
                                                 onChange={e => setNewSpecial({ ...newSpecial, precio_especial: e.target.value === "" ? null : e.target.value })}
                                             />
                                         </div>
-                                        <button
-                                            onClick={handleAddSpecialPrice}
-                                            className="bg-amber-500 hover:bg-amber-600 text-white p-3.5 rounded-xl transition-all shadow-md active:scale-95 h-[46px]"
-                                            title="Agregar Regla"
-                                        >
-                                            <Plus size={20} strokeWidth={3} />
-                                        </button>
                                     </div>
+
+                                    <button
+                                        onClick={handleAddSpecialPrice}
+                                        className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95 flex items-center justify-center gap-2"
+                                    >
+                                        <Plus size={16} strokeWidth={3} />
+                                        Guardar Precio Especial
+                                    </button>
                                 </div>
                             </div>
 
-                            {/* Lista Actual */}
-                            <div className="space-y-3">
-                                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Precios Configurados</h3>
+                            {/* Lista configurados */}
+                            <div className="space-y-2">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em] px-1">Precios Configurados</p>
                                 {loadingSpecial ? (
-                                    <div className="text-center py-10 opacity-50 text-[10px] font-bold uppercase tracking-widest">Cargando...</div>
+                                    <div className="text-center py-10 opacity-40 text-[10px] font-black uppercase tracking-widest animate-pulse">Cargando...</div>
                                 ) : preciosEspeciales.length === 0 ? (
-                                    <div className="text-center py-10 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border-2 border-dashed dark:border-slate-700 text-[10px] font-bold text-slate-400 uppercase tracking-widest">No hay precios específicos para este cliente</div>
+                                    <div className="flex flex-col items-center justify-center py-10 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700">
+                                        <DollarSign size={28} className="text-slate-300 dark:text-slate-600 mb-2" />
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sin precios especiales aún</p>
+                                    </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        {preciosEspeciales.map(ps => (
-                                            <div key={ps.producto_id} className="flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-2xl border dark:border-slate-700 shadow-sm group">
-                                                <div className="flex-1">
-                                                    <p className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-tight">{ps.producto_nombre}</p>
-                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Regular: ${ps.precio_regular}</span>
-                                                        <span className="text-[9px] font-bold text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-md uppercase tracking-widest">Aplica Cada {ps.min_cantidad} pza(s)</span>
+                                        {preciosEspeciales.map(ps => {
+                                            const pct = ps.precio_regular > 0
+                                                ? ((ps.precio_regular - ps.precio_especial) / ps.precio_regular * 100).toFixed(0)
+                                                : 0;
+                                            return (
+                                                <div key={ps.producto_id} className="group flex items-center gap-4 p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm hover:shadow-md transition-all">
+                                                    {/* Badge descuento */}
+                                                    <div className="w-12 h-12 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 flex flex-col items-center justify-center shrink-0">
+                                                        <span className="text-[9px] font-black text-emerald-600 leading-none">-{pct}%</span>
+                                                        <span className="text-[8px] text-emerald-500 font-bold leading-none mt-0.5">OFF</span>
+                                                    </div>
+
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs font-black text-slate-700 dark:text-white uppercase tracking-tight truncate">{ps.producto_nombre}</p>
+                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                            <span className="text-[9px] text-slate-400 font-bold line-through">${Number(ps.precio_regular).toFixed(2)}</span>
+                                                            <span className="text-[9px] font-black text-emerald-600">${Number(ps.precio_especial).toFixed(2)}</span>
+                                                            {ps.min_cantidad > 1 && (
+                                                                <span className="text-[8px] font-black text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 px-1.5 py-0.5 rounded-md uppercase tracking-widest">
+                                                                    Mín {ps.min_cantidad} pzas
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                                        <button
+                                                            onClick={() => setNewSpecial({ producto_id: ps.producto_id, min_cantidad: ps.min_cantidad, precio_especial: ps.precio_especial })}
+                                                            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all"
+                                                        >
+                                                            <Edit3 size={14} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteSpecialPrice(ps.producto_id)}
+                                                            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-6">
-                                                    <span className="text-lg font-bold text-amber-600 tracking-tighter">${ps.precio_especial}</span>
-                                                    <button
-                                                        onClick={() => {
-                                                            setNewSpecial({
-                                                                producto_id: ps.producto_id,
-                                                                min_cantidad: ps.min_cantidad,
-                                                                precio_especial: ps.precio_especial
-                                                            });
-                                                        }}
-                                                        className="p-2 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-all"
-                                                    >
-                                                        <Edit3 size={16} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteSpecialPrice(ps.producto_id)}
-                                                        className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>
                         </div>
-                        <div className="p-8 border-t dark:border-slate-700/50 flex justify-center bg-slate-50/50 dark:bg-slate-900/50">
-                            <button onClick={() => setIsSpecialPriceOpen(false)} className="btn-primary w-auto px-10">Listo</button>
+
+                        {/* Footer */}
+                        <div className="p-5 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 flex justify-end">
+                            <button
+                                onClick={() => setIsSpecialPriceOpen(false)}
+                                className="px-8 h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
+                            >
+                                Listo
+                            </button>
                         </div>
                     </div>
                 </div>
-            )}
+                );
+            })()}
 
             {/* Modal Crear/Editar Cliente */}
             {isModalOpen && (
                 <div className="modal-overlay">
-                    <div className="modal-container w-full max-w-lg overflow-hidden border border-white/20">
-                        <div className="px-8 py-8">
-                            <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2 uppercase tracking-tighter leading-none">
-                                {editingCliente ? "Actualizar Perfil" : "Vincular Nuevo Cliente"}
-                            </h2>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-10">Identificación oficial y contacto</p>
+                    <div className="w-full max-w-lg max-h-[95vh] flex flex-col rounded-[2rem] overflow-hidden shadow-2xl bg-white dark:bg-slate-900">
+                        {/* Gradient Header */}
+                        <div className="relative bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-600 px-8 pt-7 pb-10 overflow-hidden shrink-0">
+                            <div className="absolute inset-0 opacity-10">
+                                <div className="absolute top-4 right-4 w-32 h-32 rounded-full bg-white"></div>
+                                <div className="absolute -bottom-6 -left-6 w-40 h-40 rounded-full bg-white"></div>
+                            </div>
+                            <div className="relative flex items-start justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-lg">
+                                        <UserCheck size={26} className="text-white" />
+                                    </div>
+                                    <div>
+                                        <p className="text-white/60 text-[9px] font-black uppercase tracking-[0.3em] mb-0.5">
+                                            {editingCliente ? 'Actualizar Perfil' : 'Nuevo Registro'}
+                                        </p>
+                                        <h2 className="text-xl font-black text-white uppercase tracking-tight leading-none">
+                                            {editingCliente ? editingCliente.nombre : 'Vincular Cliente'}
+                                        </h2>
+                                        <p className="text-white/50 text-[10px] font-bold uppercase tracking-widest mt-1">Identificación y contacto</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setIsModalOpen(false)} className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all">
+                                    <X size={18} />
+                                </button>
+                            </div>
+                        </div>
 
-                            <form onSubmit={handleSubmit} className="space-y-6">
-                                <div>
-                                    <label className="label-standard ml-1">Nombre Completo *</label>
-                                    <input
-                                        type="text"
-                                        required
-                                        className="input-standard"
-                                        value={formData.nombre}
-                                        onChange={e => setFormData({ ...formData, nombre: e.target.value })}
-                                        placeholder="Nombre Legal"
-                                    />
+                        {/* Scrollable body */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-5 -mt-4 space-y-4 bg-slate-50/50 dark:bg-slate-900/50">
+                            <form onSubmit={handleSubmit} className="space-y-4">
+                                {/* Datos Personales */}
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden">
+                                    <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2">
+                                        <Users size={13} className="text-indigo-400" />
+                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em]">Datos Personales</p>
+                                    </div>
+                                    <div className="p-5">
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Nombre Completo *</label>
+                                        <input
+                                            type="text" required
+                                            className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                            value={formData.nombre}
+                                            onChange={e => setFormData({ ...formData, nombre: e.target.value })}
+                                            placeholder="Nombre completo del cliente"
+                                        />
+                                    </div>
                                 </div>
 
-                                <div className="p-6 bg-slate-50 dark:bg-slate-900/50 rounded-3xl border-2 border-dashed border-indigo-100 dark:border-indigo-500/20 mb-6">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <label className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] flex items-center gap-2">
-                                            <CreditCard size={14} /> Identificación de Membresía
-                                        </label>
-                                        <button 
-                                            type="button"
-                                            onClick={generateRandomID}
-                                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-bold px-4 py-2 rounded-full uppercase tracking-widest transition-all shadow-md active:scale-95 flex items-center gap-2"
+                                {/* Membresía */}
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden">
+                                    <div className="px-5 py-3 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-800/30 flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <CreditCard size={13} className="text-indigo-500" />
+                                            <p className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-[0.25em]">Identificación de Membresía</p>
+                                        </div>
+                                        <button
+                                            type="button" onClick={generateRandomID}
+                                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-bold px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all active:scale-95 flex items-center gap-1.5 shadow-sm shadow-indigo-500/20"
                                         >
-                                            <Plus size={12} strokeWidth={3} /> Autogenerar ID
+                                            <Plus size={11} strokeWidth={3} /> Autogenerar
                                         </button>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-5 grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="label-standard ml-1">Código / Barras</label>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Código / Barras</label>
                                             <input
                                                 type="text"
-                                                className="input-standard h-12 bg-white dark:bg-slate-800"
+                                                className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono"
                                                 value={formData.codigo_barras}
                                                 onChange={e => setFormData({ ...formData, codigo_barras: e.target.value })}
-                                                placeholder="Ej: CLI-1234"
+                                                placeholder="CLI-1234"
                                             />
                                         </div>
                                         <div>
-                                            <label className="label-standard ml-1">RFC / CURP</label>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">RFC / CURP</label>
                                             <input
                                                 type="text"
-                                                className="input-standard h-12 bg-white dark:bg-slate-800"
+                                                className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                                                 value={formData.nit_dpi}
                                                 onChange={e => setFormData({ ...formData, nit_dpi: e.target.value })}
                                                 placeholder="Opcional"
@@ -797,68 +895,82 @@ export default function ManageCustomers() {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div>
-                                        <label className="label-standard ml-1">Teléfono</label>
-                                        <input
-                                            type="text"
-                                            className="input-standard"
-                                            value={formData.telefono}
-                                            onChange={e => setFormData({ ...formData, telefono: e.target.value })}
-                                            placeholder="Contacto"
-                                        />
+                                {/* Contacto */}
+                                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden">
+                                    <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2">
+                                        <Phone size={13} className="text-slate-400" />
+                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em]">Información de Contacto</p>
+                                    </div>
+                                    <div className="p-5 space-y-4">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Teléfono</label>
+                                                <div className="relative">
+                                                    <Phone size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" />
+                                                    <input
+                                                        type="text"
+                                                        className="w-full pl-9 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pr-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                                        value={formData.telefono}
+                                                        onChange={e => setFormData({ ...formData, telefono: e.target.value })}
+                                                        placeholder="Contacto directo"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Email</label>
+                                                <div className="relative">
+                                                    <Mail size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" />
+                                                    <input
+                                                        type="email"
+                                                        className="w-full pl-9 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pr-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                                        value={formData.email}
+                                                        onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                                        placeholder="correo@ejemplo.com"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Dirección / Localidad</label>
+                                            <div className="relative">
+                                                <MapPin size={14} className="absolute left-3.5 top-3.5 text-slate-300 pointer-events-none" />
+                                                <textarea
+                                                    rows="2"
+                                                    className="w-full pl-9 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl pr-4 py-3 text-sm text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none transition-all"
+                                                    value={formData.direccion}
+                                                    onChange={e => setFormData({ ...formData, direccion: e.target.value })}
+                                                    placeholder="Dirección física"
+                                                ></textarea>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div>
-                                    <label className="label-standard ml-1">Email</label>
-                                    <input
-                                        type="email"
-                                        className="input-standard"
-                                        value={formData.email}
-                                        onChange={e => setFormData({ ...formData, email: e.target.value })}
-                                        placeholder="correo@ejemplo.com"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="label-standard ml-1">Dirección / Localidad</label>
-                                    <textarea
-                                        rows="2"
-                                        className="input-standard"
-                                        value={formData.direccion}
-                                        onChange={e => setFormData({ ...formData, direccion: e.target.value })}
-                                        placeholder="Dirección física"
-                                    ></textarea>
-                                </div>
-
+                                {/* Configuración de Crédito */}
                                 {isAdmin && (
-                                    <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-3xl border dark:border-slate-700/50 space-y-4">
-                                        <div className="flex items-center justify-between">
-                                            <div>
-                                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Configuración de Crédito</h3>
-                                                <p className="text-[8px] font-bold text-slate-400 uppercase">Habilitar ventas a crédito con límite</p>
+                                    <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden">
+                                        <div className="px-5 py-3 bg-emerald-50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-800/30 flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Banknote size={13} className="text-emerald-500" />
+                                                <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-[0.25em]">Configuración de Crédito</p>
                                             </div>
                                             <label className="relative inline-flex items-center cursor-pointer">
                                                 <input
-                                                    type="checkbox"
-                                                    className="sr-only peer"
+                                                    type="checkbox" className="sr-only peer"
                                                     checked={formData.credito_habilitado}
                                                     onChange={e => setFormData({ ...formData, credito_habilitado: e.target.checked })}
                                                 />
-                                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-emerald-500"></div>
                                             </label>
                                         </div>
-
                                         {formData.credito_habilitado && (
-                                            <div className="animate-in slide-in-from-top-2 duration-300">
-                                                <label className="label-standard ml-1">Límite de Crédito ($)</label>
+                                            <div className="p-5 animate-in slide-in-from-top-2 duration-300">
+                                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Límite de Crédito ($)</label>
                                                 <div className="relative">
-                                                    <DollarSign size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                    <DollarSign size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                                     <input
-                                                        type="number"
-                                                        step="0.01"
-                                                        className="input-standard pl-12"
+                                                        type="number" step="0.01"
+                                                        className="w-full pl-10 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
                                                         value={formData.limite_credito}
                                                         onChange={e => setFormData({ ...formData, limite_credito: e.target.value })}
                                                         placeholder="0.00"
@@ -869,19 +981,22 @@ export default function ManageCustomers() {
                                     </div>
                                 )}
 
-                                <div className="pt-6 flex flex-col gap-3">
+                                {/* Action buttons */}
+                                <div className="flex flex-col gap-3 pt-1 pb-2">
                                     <button
                                         type="submit"
-                                        className="btn-primary"
+                                        className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95 flex items-center justify-center gap-2"
                                     >
-                                        {editingCliente ? "Guardar Cambios" : "Sincronizar Cliente"}
+                                        {editingCliente
+                                            ? <><Edit size={15} /> Guardar Cambios</>
+                                            : <><Plus size={15} strokeWidth={3} /> Registrar Cliente</>
+                                        }
                                     </button>
                                     <button
-                                        type="button"
-                                        onClick={() => setIsModalOpen(false)}
-                                        className="btn-secondary w-full justify-center"
+                                        type="button" onClick={() => setIsModalOpen(false)}
+                                        className="w-full h-11 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 font-black text-[10px] uppercase tracking-widest rounded-xl transition-all"
                                     >
-                                        Retroceder
+                                        Cancelar
                                     </button>
                                 </div>
                             </form>
@@ -893,98 +1008,91 @@ export default function ManageCustomers() {
             {/* Modal Historial */}
             {isHistoryOpen && (
                 <div className="modal-overlay">
-                    <div className="modal-container w-full max-w-2xl max-h-[85vh] flex flex-col p-0">
-                        <div className="modal-header px-10 py-10 bg-slate-50/50 dark:bg-slate-900/50 flex justify-between items-end border-b dark:border-slate-700/50">
-                            <div>
-                                <h2 className="text-2xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter leading-none mb-2">Auditoría de Actividad</h2>
-                                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">{selectedClient?.nombre}</p>
+                    <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-[2rem] overflow-hidden shadow-2xl bg-white dark:bg-slate-900">
+                        {/* Header */}
+                        <div className="relative bg-gradient-to-br from-slate-800 to-slate-900 dark:from-slate-900 dark:to-black px-8 pt-7 pb-10 overflow-hidden">
+                            <div className="absolute inset-0 opacity-10"><div className="absolute top-2 right-6 w-32 h-32 rounded-full bg-indigo-400"></div><div className="absolute -bottom-4 -left-4 w-24 h-24 rounded-full bg-violet-400"></div></div>
+                            <div className="relative flex items-start justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center"><Clock size={22} className="text-white" /></div>
+                                    <div>
+                                        <p className="text-white/50 text-[9px] font-black uppercase tracking-[0.3em] mb-0.5">Auditoría de Actividad</p>
+                                        <h2 className="text-lg font-black text-white uppercase tracking-tight">{selectedClient?.nombre}</h2>
+                                        <p className="text-white/40 text-[9px] font-bold uppercase tracking-widest mt-0.5">{clientHistory.length} movimiento{clientHistory.length !== 1 ? 's' : ''}</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setIsHistoryOpen(false)} className="relative w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all"><X size={16} /></button>
                             </div>
-                            <button onClick={() => setIsHistoryOpen(false)} className="text-slate-300 hover:text-slate-600 p-2 hover:bg-white dark:hover:bg-slate-700 rounded-full transition-all">
-                                <X size={28} />
-                            </button>
                         </div>
 
-                        <div className="p-0 overflow-y-auto flex-1 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar -mt-3">
                             {loadingHistory ? (
                                 <div className="p-20 text-center animate-pulse flex flex-col items-center gap-4">
-                                    <Clock className="text-slate-100 dark:text-slate-800" size={60} />
-                                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-300 dark:text-slate-700">Auditando transacciones...</p>
+                                    <Clock className="text-slate-200 dark:text-slate-700" size={48} />
+                                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-300 dark:text-slate-600">Cargando movimientos...</p>
                                 </div>
                             ) : clientHistory.length === 0 ? (
-                                <div className="p-20 text-center flex flex-col items-center gap-4">
-                                    <div className="w-20 h-20 bg-slate-50 dark:bg-slate-700/50 rounded-full flex items-center justify-center text-slate-200 dark:text-slate-600">
-                                        <FileText size={40} />
-                                    </div>
-                                    <p className="text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] tracking-widest">Sin actividad transaccional registrada.</p>
+                                <div className="p-20 text-center flex flex-col items-center gap-3">
+                                    <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center"><FileText size={28} className="text-slate-300 dark:text-slate-600" /></div>
+                                    <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest">Sin actividad registrada</p>
                                 </div>
                             ) : (
                                 <table className="w-full text-sm text-left border-collapse">
-                                    <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 uppercase text-[9px] font-bold tracking-widest sticky top-0 border-b dark:border-slate-700/50 z-10">
+                                    <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-400 uppercase text-[9px] font-black tracking-widest sticky top-0 border-b border-slate-100 dark:border-slate-700 z-10">
                                         <tr>
-                                            <th className="px-8 py-5">Cronología / Sucursal</th>
-                                            <th className="px-8 py-5">Detalle / ID</th>
-                                            <th className="px-8 py-5 text-right">Método</th>
-                                            <th className="px-8 py-5 text-right">Monto Operado</th>
+                                            <th className="px-6 py-4">Fecha / Tienda</th>
+                                            <th className="px-6 py-4">Movimiento</th>
+                                            <th className="px-6 py-4 text-center">Método</th>
+                                            <th className="px-6 py-4 text-right">Monto</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                        {clientHistory.map((evento, index) => (
-                                            <tr key={index} className={`hover:bg-indigo-50/20 dark:hover:bg-indigo-900/10 transition-colors group ${evento.estado === 'CANCELADA' ? 'opacity-50 grayscale' : ''}`}>
-                                                <td className="px-8 py-5">
-                                                    <div className="flex flex-col">
-                                                        <span className="text-slate-400 dark:text-slate-500 font-bold text-[10px] uppercase tracking-widest">{new Date(evento.fecha.replace(/-/g, '\/')).toLocaleDateString()}</span>
-                                                        <span className="text-[10px] font-bold text-slate-800 dark:text-slate-300 uppercase">{evento.tienda_nombre || 'Sede Central'}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-5">
-                                                    <div className="flex flex-col">
-                                                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-md w-max mb-1 uppercase tracking-widest ${evento.tipo_evento === 'ABONO' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30' : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30'}`}>
-                                                            {evento.tipo_evento === 'ABONO' ? 'PAGO / ABONO' : 'COMPRA'}
+                                    <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+                                        {clientHistory.map((evento, index) => {
+                                            const fecha = evento.fecha ? new Date(evento.fecha.replace(' ', 'T')) : null;
+                                            const fechaStr = fecha && !isNaN(fecha) ? fecha.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—';
+                                            const horaStr = fecha && !isNaN(fecha) ? fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '';
+                                            const esAbono = evento.tipo_evento === 'ABONO';
+                                            return (
+                                                <tr key={index} className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors ${evento.estado === 'CANCELADA' ? 'opacity-40' : ''}`}>
+                                                    <td className="px-6 py-4">
+                                                        <p className="text-[11px] font-black text-slate-700 dark:text-slate-200">{fechaStr}</p>
+                                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{horaStr}</p>
+                                                        <p className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{evento.tienda_nombre || 'Central'}</p>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`inline-block text-[8px] font-black px-2 py-0.5 rounded-lg mb-1 uppercase tracking-widest ${esAbono ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'}`}>
+                                                            {esAbono ? 'Abono' : 'Compra'}
                                                         </span>
-                                                        <p className={`text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-tighter truncate max-w-[200px] ${evento.estado === 'CANCELADA' ? 'line-through' : ''}`}>
-                                                            {evento.resumen_productos}
-                                                        </p>
-                                                        <span className="text-[8px] font-bold text-slate-400">ID: #{evento.id}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-5 text-right">
-                                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{evento.metodo_display}</span>
-                                                </td>
-                                                <td className="px-8 py-5 text-right">
-                                                    <span className={`text-base font-bold tracking-tighter ${evento.tipo_evento === 'ABONO' ? 'text-emerald-600 dark:text-emerald-400' : (evento.estado === 'CANCELADA' ? 'text-slate-400 line-through' : 'text-indigo-600 dark:text-indigo-400')}`}>
-                                                        {evento.tipo_evento === 'ABONO' ? '-' : ''}{storeConfig?.moneda || '$'} {Number(evento.monto_operado).toFixed(2)}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        ))}
+                                                        <p className={`text-[11px] font-bold text-slate-600 dark:text-slate-300 truncate max-w-[180px] ${evento.estado === 'CANCELADA' ? 'line-through' : ''}`}>{evento.resumen_productos}</p>
+                                                        <p className="text-[9px] text-slate-400 font-mono">#{evento.id}</p>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-center">
+                                                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">{evento.metodo_display}</span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right">
+                                                        <span className={`text-sm font-black tracking-tighter ${esAbono ? 'text-emerald-600 dark:text-emerald-400' : evento.estado === 'CANCELADA' ? 'text-slate-400 line-through' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                                                            {esAbono ? '-' : '+'}{storeConfig?.moneda || '$'}{Number(evento.monto_operado).toFixed(2)}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             )}
                         </div>
 
-                        <div className="p-10 border-t dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 flex flex-col md:flex-row gap-4 items-center justify-between">
-                            <div className="flex gap-3">
-                                <button onClick={() => {
-                                    const data = clientHistory.map(v => ({ Cronología: new Date(v.fecha.replace(/-/g, '\/')).toLocaleDateString(), Tipo: v.tipo_evento, Detalle: v.resumen_productos, Métodos: v.metodo_display, Monto: v.monto_operado }));
-                                    exportToExcel(data, `Historial_${selectedClient?.nombre}`, 'Historial');
-                                }} className="h-[40px] px-5 rounded-xl flex items-center gap-2.5 bg-white dark:bg-slate-800 text-emerald-600 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-emerald-50 dark:hover:bg-emerald-900/10 transition-all group">
-                                    <Table size={14} className="group-hover:scale-110 transition-transform" />
-                                    <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600">EXCEL</span>
+                        <div className="p-5 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between gap-3">
+                            <div className="flex gap-2">
+                                <button onClick={() => { const data = clientHistory.map(v => ({ Fecha: v.fecha ? new Date(v.fecha.replace(' ','T')).toLocaleDateString('es-MX') : '—', Tipo: v.tipo_evento, Detalle: v.resumen_productos, Método: v.metodo_display, Monto: v.monto_operado })); exportToExcel(data, `Historial_${selectedClient?.nombre}`, 'Historial'); }} className="h-9 px-4 rounded-xl flex items-center gap-2 bg-white dark:bg-slate-800 text-emerald-600 border border-slate-200 dark:border-slate-700 hover:bg-emerald-50 transition-all">
+                                    <Table size={13} /><span className="text-[9px] font-black uppercase tracking-widest">Excel</span>
                                 </button>
-                                <button onClick={() => {
-                                    const headers = ['Fecha', 'Tipo', 'Detalle', 'Métodos', 'Monto'];
-                                    const data = clientHistory.map(v => [new Date(v.fecha.replace(/-/g, '\/')).toLocaleDateString(), v.tipo_evento, v.resumen_productos, v.metodo_display, `${storeConfig?.moneda || '$'} ${Number(v.monto_operado).toFixed(2)}`]);
-                                    exportToPDF({ title: `Auditoría: ${selectedClient?.nombre}`, headers, data, fileName: `Historial_${selectedClient?.nombre}` });
-                                }} className="h-[40px] px-5 rounded-xl flex items-center gap-2.5 bg-white dark:bg-slate-800 text-rose-600 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:bg-rose-50 dark:hover:bg-rose-900/10 transition-all group">
-                                    <FileText size={14} className="group-hover:scale-110 transition-transform" />
-                                    <span className="text-[9px] font-black uppercase tracking-widest text-rose-600">PDF</span>
+                                <button onClick={() => { const headers = ['Fecha','Tipo','Detalle','Método','Monto']; const data = clientHistory.map(v => [v.fecha ? new Date(v.fecha.replace(' ','T')).toLocaleDateString('es-MX') : '—', v.tipo_evento, v.resumen_productos, v.metodo_display, `${storeConfig?.moneda||'$'}${Number(v.monto_operado).toFixed(2)}`]); exportToPDF({ title: `Auditoría: ${selectedClient?.nombre}`, headers, data, fileName: `Historial_${selectedClient?.nombre}` }); }} className="h-9 px-4 rounded-xl flex items-center gap-2 bg-white dark:bg-slate-800 text-rose-500 border border-slate-200 dark:border-slate-700 hover:bg-rose-50 transition-all">
+                                    <FileText size={13} /><span className="text-[9px] font-black uppercase tracking-widest">PDF</span>
                                 </button>
                             </div>
-                            <button
-                                onClick={() => setIsHistoryOpen(false)}
-                                className="btn-primary w-auto px-10"
-                            >
-                                Cerrar Auditoría
+                            <button onClick={() => setIsHistoryOpen(false)} className="h-9 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95">
+                                Cerrar
                             </button>
                         </div>
                     </div>
@@ -992,77 +1100,93 @@ export default function ManageCustomers() {
             )}
 
             {/* Modal Registrar Abono */}
-            {isAbonoModalOpen && selectedClient && (
+            {isAbonoModalOpen && selectedClient && (() => {
+                const deuda = Number(selectedClient.saldo_deudor || 0);
+                const limite = Number(selectedClient.limite_credito || 0);
+                const abono = parseFloat(abonoData.monto) || 0;
+                const restante = Math.max(0, deuda - abono);
+                const pct = deuda > 0 ? Math.min((abono / deuda) * 100, 100) : 0;
+                return (
                 <div className="modal-overlay">
-                    <div className="modal-container w-full max-w-md overflow-hidden border border-white/20">
-                        <div className="px-10 py-10">
-                            <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2 uppercase tracking-tighter leading-none">
-                                Registrar Abono
-                            </h2>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-10">Cliente: {selectedClient.nombre}</p>
-
-                            <form onSubmit={handleRegistrarAbono} className="space-y-6">
-                                <div className="p-6 bg-rose-50 dark:bg-rose-900/20 rounded-3xl border border-rose-100 dark:border-rose-800/40 mb-6">
-                                    <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Deuda Pendiente Actual</p>
-                                    <p className="text-3xl font-black text-rose-600 tracking-tighter">${Number(selectedClient.saldo_deudor || 0).toFixed(2)}</p>
+                    <div className="w-full max-w-md rounded-[2rem] overflow-hidden shadow-2xl bg-white dark:bg-slate-900 flex flex-col">
+                        {/* Header */}
+                        <div className="relative bg-gradient-to-br from-rose-600 to-rose-700 px-8 pt-7 pb-10 overflow-hidden">
+                            <div className="absolute inset-0 opacity-10"><div className="absolute top-2 right-6 w-32 h-32 rounded-full bg-white"></div><div className="absolute -bottom-4 -left-4 w-24 h-24 rounded-full bg-white"></div></div>
+                            <div className="relative flex items-start justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center"><Banknote size={22} className="text-white" /></div>
+                                    <div>
+                                        <p className="text-white/60 text-[9px] font-black uppercase tracking-[0.3em] mb-0.5">Registrar Abono</p>
+                                        <h2 className="text-lg font-black text-white uppercase tracking-tight leading-none">{selectedClient.nombre}</h2>
+                                    </div>
                                 </div>
+                                <button onClick={() => setIsAbonoModalOpen(false)} className="relative w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all"><X size={16} /></button>
+                            </div>
+                        </div>
 
+                        <div className="p-6 -mt-4 space-y-5 overflow-y-auto">
+                            {/* Balance card */}
+                            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm p-5">
+                                <div className="flex items-end justify-between mb-3">
+                                    <div>
+                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Deuda actual</p>
+                                        <p className="text-2xl font-black text-rose-600 tracking-tighter">${deuda.toFixed(2)}</p>
+                                    </div>
+                                    {abono > 0 && (
+                                        <div className="text-right">
+                                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Quedaría</p>
+                                            <p className={`text-lg font-black tracking-tighter ${restante === 0 ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-200'}`}>${restante.toFixed(2)}</p>
+                                        </div>
+                                    )}
+                                </div>
+                                {/* Progress bar */}
+                                <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                    <div className="h-full bg-emerald-500 rounded-full transition-all duration-300" style={{ width: `${pct}%` }}></div>
+                                </div>
+                                {abono > 0 && <p className="text-[9px] font-bold text-emerald-600 mt-1.5 text-right">{pct.toFixed(0)}% liquidado</p>}
+                            </div>
+
+                            <form onSubmit={handleRegistrarAbono} className="space-y-4">
                                 <div>
-                                    <label className="label-standard ml-1">Monto del Abono ($)</label>
+                                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Monto del Abono ($)</label>
                                     <div className="relative">
-                                        <DollarSign size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-black text-sm">$</span>
                                         <input
-                                            type="number"
-                                            step="0.01"
-                                            max={selectedClient.saldo_deudor}
-                                            required
-                                            className="input-standard pl-12"
+                                            type="number" step="0.01" max={deuda} required autoFocus
+                                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-4 py-3 text-lg font-black text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all"
                                             value={abonoData.monto}
                                             onChange={e => setAbonoData({ ...abonoData, monto: e.target.value })}
                                             placeholder="0.00"
                                         />
                                     </div>
-                                    <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase tracking-widest ml-1">El monto no puede exceder la deuda actual</p>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    {['EFECTIVO','TARJETA','TRANSFERENCIA','OTRO'].map(m => (
+                                        <button key={m} type="button"
+                                            onClick={() => setAbonoData({ ...abonoData, metodo_pago: m })}
+                                            className={`h-11 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${abonoData.metodo_pago === m ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-50 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 hover:border-indigo-300'}`}
+                                        >{m}</button>
+                                    ))}
                                 </div>
 
                                 <div>
-                                    <label className="label-standard ml-1">Método de Pago</label>
-                                    <select
-                                        className="select-standard uppercase font-black text-[10px] tracking-widest"
-                                        value={abonoData.metodo_pago}
-                                        onChange={e => setAbonoData({ ...abonoData, metodo_pago: e.target.value })}
-                                    >
-                                        <option value="EFECTIVO">EFECTIVO</option>
-                                        <option value="TARJETA">TARJETA</option>
-                                        <option value="TRANSFERENCIA">TRANSFERENCIA</option>
-                                        <option value="OTRO">OTRO</option>
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label className="label-standard ml-1">Nota / Referencia</label>
-                                    <textarea
-                                        rows="2"
-                                        className="input-standard"
+                                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">Nota / Referencia</label>
+                                    <textarea rows="2"
+                                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none transition-all"
                                         value={abonoData.nota}
                                         onChange={e => setAbonoData({ ...abonoData, nota: e.target.value })}
-                                        placeholder="Ej: Pago de factura #123 o Referencia Bancaria"
-                                    ></textarea>
+                                        placeholder="Referencia de pago o nota..."
+                                    />
                                 </div>
 
-                                <div className="pt-6 flex flex-col gap-3">
-                                    <button
-                                        type="submit"
-                                        disabled={isSavingAbono}
-                                        className="btn-primary"
-                                    >
-                                        {isSavingAbono ? "Procesando..." : "Confirmar Abono"}
+                                <div className="pt-1 flex flex-col gap-2">
+                                    <button type="submit" disabled={isSavingAbono}
+                                        className="w-full h-12 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-rose-500/20 active:scale-95">
+                                        {isSavingAbono ? 'Procesando...' : 'Confirmar Abono'}
                                     </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsAbonoModalOpen(false)}
-                                        className="btn-secondary w-full justify-center"
-                                    >
+                                    <button type="button" onClick={() => setIsAbonoModalOpen(false)}
+                                        className="w-full h-11 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-500 font-black text-[10px] uppercase tracking-widest rounded-xl transition-all">
                                         Cancelar
                                     </button>
                                 </div>
@@ -1070,7 +1194,8 @@ export default function ManageCustomers() {
                         </div>
                     </div>
                 </div>
-            )}
+                );
+            })()}
         </div >
     );
 }

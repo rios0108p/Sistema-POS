@@ -32,7 +32,11 @@ router.get('/', async (req, res) => {
             tienda_id = tienda_id.substring(1);
         }
 
-        let query = 'SELECT p.*, t.nombre as tienda_nombre FROM pedidos p LEFT JOIN tiendas t ON p.tienda_id = t.id';
+        let query = `SELECT p.*, t.nombre as tienda_nombre,
+                     u.nombre_usuario as usuario_nombre, u.rol as usuario_rol
+                     FROM pedidos p
+                     LEFT JOIN tiendas t ON p.tienda_id = t.id
+                     LEFT JOIN usuarios u ON p.usuario_solicitante_id = u.id`;
         const params = [];
         const { show_all } = req.query;
 

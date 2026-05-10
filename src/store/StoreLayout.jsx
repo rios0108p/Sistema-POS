@@ -4,8 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import SellerNavbar from "./StoreNavbar";
 import SellerSidebar from "./StoreSidebar";
 import ElectronTitleBar from "../Components/ElectronTitleBar";
+import { useNetwork } from "../context/NetworkContext";
+import { WifiOff, CloudUpload } from "lucide-react";
 
 const StoreLayout = () => {
+  const { isOnline, pendingOps, isSyncing } = useNetwork();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(() => {
     return localStorage.getItem('sidebar_collapsed') === 'true';
@@ -62,18 +65,52 @@ const StoreLayout = () => {
       
       {/* Header should also blur if requested */}
       <div className="layout-content-wrapper z-40">
-        <SellerNavbar 
+        <SellerNavbar
           onMenuToggle={() => {
             if (windowWidth >= 1024) {
               setIsCollapsed(!isCollapsed);
             } else {
               setSidebarOpen(!sidebarOpen);
             }
-          }} 
-          sidebarOpen={sidebarOpen} 
+          }}
+          sidebarOpen={sidebarOpen}
           isCollapsed={isCollapsed}
         />
       </div>
+
+      {/* Offline / syncing status banner */}
+      <AnimatePresence>
+        {(!isOnline || isSyncing) && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className={`z-30 flex items-center justify-center gap-2 px-4 py-1 text-xs font-semibold ${
+              isSyncing
+                ? 'bg-indigo-600 text-white'
+                : 'bg-orange-600 text-white'
+            }`}
+          >
+            {isSyncing ? (
+              <>
+                <CloudUpload size={13} className="animate-pulse" />
+                Sincronizando datos con el servidor...
+              </>
+            ) : (
+              <>
+                <WifiOff size={13} />
+                Modo sin conexión — las operaciones se guardan localmente
+                {pendingOps > 0 && (
+                  <span className="ml-1 bg-white/20 rounded px-1.5 py-0.5">
+                    {pendingOps} pendiente{pendingOps !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Mobile backdrop */}

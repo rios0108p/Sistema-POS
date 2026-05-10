@@ -1,27 +1,37 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { useNetwork } from "../context/NetworkContext";
 import { dashboardAPI, configuracionAPI, getImageUrl } from "../services/api";
-import { Menu, X, Moon, Sun, Bell, Settings, User, Search, Store, Printer, Settings2, Wifi, WifiOff, RefreshCw } from "lucide-react";
+import { Menu, X, Moon, Sun, Bell, Settings, User, Search, Store, Printer, Settings2, Wifi, WifiOff, RefreshCw, Monitor } from "lucide-react";
 import { toast } from "react-hot-toast";
 import GlobalSearch from "../Components/GlobalSearch";
 import NotificationDropdown from "../Components/NotificationDropdown";
 import SyncManagerPanel from "../Components/SyncManagerPanel";
 import Icono from "../assets/ICONO.png";
 
+const isElectron = !!window.electronAPI;
+
 const StoreNavbar = ({ onMenuToggle, sidebarOpen, isCollapsed }) => {
   const { user, storeConfig } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const { isOnline, pendingOps, isSyncing } = useNetwork();
+  const navigate = useNavigate();
   const [lastPedidosCount, setLastPedidosCount] = useState(0);
   const [isPrinterLinked, setIsPrinterLinked] = useState(false);
+  const [electronPrinterName, setElectronPrinterName] = useState('');
   const [showSyncPanel, setShowSyncPanel] = useState(false);
 
   useEffect(() => {
-    const vid = localStorage.getItem('pos_printer_vendor_id');
-    setIsPrinterLinked(!!vid);
+    if (isElectron) {
+      const name = localStorage.getItem('pos_printer_name') || '';
+      setElectronPrinterName(name);
+      setIsPrinterLinked(!!name);
+    } else {
+      const vid = localStorage.getItem('pos_printer_vendor_id');
+      setIsPrinterLinked(!!vid);
+    }
   }, []);
 
   // Poll for new requests every 60 seconds
@@ -193,14 +203,15 @@ const StoreNavbar = ({ onMenuToggle, sidebarOpen, isCollapsed }) => {
 
       {/* Right side: Actions */}
       <div className="flex items-center gap-2 sm:gap-6">
-        {!window.electronAPI?.isDesktop && user?.rol?.toLowerCase() === 'admin' && (
+        {!window.electronAPI?.isDesktop && (
           <a
-            href="/downloads/TENDO-POS-Setup-1.1.4.exe"
-            download="TENDO-POS-Setup-1.1.4.exe"
-            className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-black text-[10px] uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all active:scale-95"
+            href="/downloads/TENDO-POS-Setup-1.1.15.exe"
+            download="TENDO-POS-Setup-1.1.15.exe"
+            className="hidden sm:flex items-center gap-2 pl-3 pr-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-indigo-500/25 group"
           >
-            <Printer size={14} className="rotate-180" />
-            Descargar App
+            <Monitor size={15} className="group-hover:scale-110 transition-transform shrink-0" />
+            <span>Descargar App</span>
+            <span className="bg-white/20 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md leading-none">v1.1.15</span>
           </a>
         )}
         <div className="flex items-center gap-2">
@@ -218,44 +229,65 @@ const StoreNavbar = ({ onMenuToggle, sidebarOpen, isCollapsed }) => {
           </button>
 
           <div className="flex items-center gap-1 p-1 bg-slate-50 dark:bg-slate-800 rounded-2xl transition-all">
-            <button
-              onClick={setupDirectPrinter}
-              className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all hover:shadow-md active:scale-90 relative ${isPrinterLinked
-                ? 'text-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/20'
-                : 'text-slate-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-slate-700'
-                }`}
-              title="VINCULAR USB (Recomendado - Usa Zadig si da error)"
-            >
-              <Printer size={18} />
-              {isPrinterLinked && (
-                <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-emerald-500 rounded-full border border-white dark:border-slate-800"></div>
-              )}
-            </button>
-
-            <button
-              onClick={setupSerialPrinter}
-              className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-amber-500 hover:bg-white dark:hover:bg-slate-700 transition-all active:scale-90"
-              title="VINCULAR SERIAL (COM) - Usa esto si el USB está bloqueado"
-            >
-              <Search size={16} />
-            </button>
-
-            {isPrinterLinked && (
+            {isElectron ? (
+              /* En Electron: mostrar impresora del sistema configurada en Ajustes */
+              <button
+                onClick={() => navigate('/store/settings')}
+                className={`flex items-center gap-2 px-3 h-10 rounded-xl transition-all hover:shadow-md active:scale-90 relative ${isPrinterLinked
+                  ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20'
+                  : 'text-amber-500 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100'
+                  }`}
+                title={isPrinterLinked ? `Impresora: ${electronPrinterName}` : 'Sin impresora — ve a Ajustes para configurar'}
+              >
+                <Printer size={16} />
+                <span className="text-[9px] font-black uppercase tracking-widest hidden sm:block max-w-[90px] truncate">
+                  {isPrinterLinked ? electronPrinterName : 'Sin impresora'}
+                </span>
+                {isPrinterLinked && (
+                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
+                )}
+              </button>
+            ) : (
+              /* En Web: botones USB / Serial */
               <>
                 <button
-                  onClick={handleTestPrint}
-                  className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-slate-700 transition-all active:scale-90"
-                  title="Ticket de Prueba Directo"
+                  onClick={setupDirectPrinter}
+                  className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all hover:shadow-md active:scale-90 relative ${isPrinterLinked
+                    ? 'text-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/20'
+                    : 'text-slate-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-slate-700'
+                    }`}
+                  title="VINCULAR USB (Recomendado - Usa Zadig si da error)"
                 >
-                  <Settings2 size={16} />
+                  <Printer size={18} />
+                  {isPrinterLinked && (
+                    <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-emerald-500 rounded-full border border-white dark:border-slate-800"></div>
+                  )}
                 </button>
                 <button
-                  onClick={forgetPrinter}
-                  className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-red-500 hover:bg-white dark:hover:bg-slate-700 transition-all active:scale-90"
-                  title="OLVIDAR / RESET - Úsalo si falla la conexión"
+                  onClick={setupSerialPrinter}
+                  className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-amber-500 hover:bg-white dark:hover:bg-slate-700 transition-all active:scale-90"
+                  title="VINCULAR SERIAL (COM) - Usa esto si el USB está bloqueado"
                 >
-                  <X size={16} />
+                  <Search size={16} />
                 </button>
+                {isPrinterLinked && (
+                  <>
+                    <button
+                      onClick={handleTestPrint}
+                      className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-slate-700 transition-all active:scale-90"
+                      title="Ticket de Prueba Directo"
+                    >
+                      <Settings2 size={16} />
+                    </button>
+                    <button
+                      onClick={forgetPrinter}
+                      className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-red-500 hover:bg-white dark:hover:bg-slate-700 transition-all active:scale-90"
+                      title="OLVIDAR / RESET - Úsalo si falla la conexión"
+                    >
+                      <X size={16} />
+                    </button>
+                  </>
+                )}
               </>
             )}
           </div>

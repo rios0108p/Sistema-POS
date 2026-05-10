@@ -117,7 +117,8 @@ class LocalDB {
     const placeholders = keys.map(() => '?').join(', ');
     const values = keys.map(k => {
       const v = record[k];
-      // Stringify objects/arrays for JSON storage
+      if (v === undefined) return null;
+      if (typeof v === 'boolean') return v ? 1 : 0;
       if (typeof v === 'object' && v !== null) return JSON.stringify(v);
       return v;
     });
@@ -146,6 +147,8 @@ class LocalDB {
     const setClauses = Object.keys(record).map(k => `${k} = ?`).join(', ');
     const values = Object.keys(record).map(k => {
       const v = record[k];
+      if (v === undefined) return null;
+      if (typeof v === 'boolean') return v ? 1 : 0;
       if (typeof v === 'object' && v !== null) return JSON.stringify(v);
       return v;
     });
@@ -254,8 +257,9 @@ class LocalDB {
   countPendingOps() {
     const tables = [
       'products', 'product_variants', 'categories', 'customers',
-      'suppliers', 'sales', 'sale_items', 'inventory_movements',
-      'expenses', 'cash_registers', 'cash_register_movements'
+      'suppliers', 'sales', 'inventory_movements',
+      'expenses', 'cash_registers', 'cash_register_movements',
+      'pedidos', 'pedido_detalles', 'compras'
     ];
 
     let total = 0;
@@ -302,6 +306,8 @@ class LocalDB {
       .join(', ');
     const values = keys.map(k => {
       const v = record[k];
+      if (v === undefined) return null;
+      if (typeof v === 'boolean') return v ? 1 : 0;
       if (typeof v === 'object' && v !== null) return JSON.stringify(v);
       return v;
     });

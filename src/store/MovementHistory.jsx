@@ -7,16 +7,10 @@ import {
     TrendingDown,
     User,
     Store,
-    Download,
     Table,
     FileText,
     Printer,
-    ChevronRight,
     CreditCard,
-    Wallet,
-    Filter,
-    ArrowRight,
-    DollarSign,
     RefreshCw,
     Activity,
     History
@@ -24,7 +18,6 @@ import {
 import { movimientosAPI, dashboardAPI, configuracionAPI, tiendasAPI } from "../services/api";
 import { CURRENCY_SYMBOL } from "../utils/currency";
 import { useAuth } from "../context/AuthContext";
-import Loading from "../Components/Common/Loading";
 import { toast } from "react-hot-toast";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
 import { printTicket } from "../utils/printUtils";
@@ -237,47 +230,47 @@ export default function MovementHistory() {
                 </div>
 
                 {/* Audit Table */}
-                <div className="card-standard p-0 overflow-hidden shadow-2xl relative transition-all duration-500">
-                    <div className="overflow-x-auto custom-scrollbar">
-                        <table className="w-full text-left border-collapse">
+                <div className="card-standard p-0 overflow-hidden shadow-xl relative">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse min-w-[640px]">
                             <thead>
-                                <tr className="bg-slate-50/80 dark:bg-slate-900/40 backdrop-blur-md border-b dark:border-slate-700/50">
-                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Ticket / Hora</th>
-                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] text-center">Operación</th>
-                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Descriptor de Movimiento</th>
-                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] text-center">Estatus</th>
-                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] text-right">Monto Neto</th>
-                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] text-center">Responsable</th>
-                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] text-center">Herramientas</th>
+                                <tr className="bg-slate-50/80 dark:bg-slate-900/40 border-b dark:border-slate-700/50 text-[9px] font-black uppercase text-slate-400 tracking-[0.15em]">
+                                    <th className="px-4 sm:px-6 py-4 whitespace-nowrap">Ticket / Hora</th>
+                                    <th className="px-4 sm:px-6 py-4 text-center whitespace-nowrap">Operación</th>
+                                    <th className="px-4 sm:px-6 py-4">Descripción</th>
+                                    <th className="px-4 sm:px-6 py-4 text-center hidden sm:table-cell whitespace-nowrap">Estatus</th>
+                                    <th className="px-4 sm:px-6 py-4 text-right whitespace-nowrap">Importe</th>
+                                    <th className="px-4 sm:px-6 py-4 text-center hidden md:table-cell whitespace-nowrap">Responsable</th>
+                                    <th className="px-4 sm:px-6 py-4 text-center whitespace-nowrap">Acc.</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/30">
                                 {loading ? (
                                     <tr>
-                                        <td colSpan="7" className="py-24 text-center">
-                                            <div className="flex flex-col items-center gap-6">
-                                                <RefreshCw size={50} className="text-indigo-600 animate-spin opacity-40" />
-                                                <p className="font-black uppercase tracking-[0.3em] text-xs text-slate-400">Sincronizando auditoría...</p>
+                                        <td colSpan="7" className="py-20 text-center">
+                                            <div className="flex flex-col items-center gap-4">
+                                                <RefreshCw size={36} className="text-indigo-500 animate-spin opacity-50" />
+                                                <p className="font-black uppercase tracking-widest text-[10px] text-slate-400">Cargando historial...</p>
                                             </div>
                                         </td>
                                     </tr>
                                 ) : filteredMovimientos.length === 0 ? (
                                     <tr>
-                                        <td colSpan="7" className="py-24 text-center">
-                                            <div className="flex flex-col items-center gap-6 opacity-20">
-                                                <Activity size={80} className="text-slate-400" />
-                                                <p className="font-black uppercase tracking-[0.3em] text-xs">No se localizaron registros para los filtros aplicados</p>
+                                        <td colSpan="7" className="py-20 text-center">
+                                            <div className="flex flex-col items-center gap-4 opacity-30">
+                                                <Activity size={48} className="text-slate-400" />
+                                                <p className="font-black uppercase tracking-widest text-[10px]">Sin registros para los filtros aplicados</p>
                                             </div>
                                         </td>
                                     </tr>
                                 ) : (
                                     Object.entries(groupMovimientosByDate(filteredMovimientos)).map(([dateKey, groupMovs]) => (
                                         <React.Fragment key={dateKey}>
-                                            <tr className="bg-slate-100/50 dark:bg-slate-800/50">
-                                                <td colSpan="7" className="px-8 py-3 text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-[0.3em] border-y dark:border-slate-700/50">
+                                            <tr className="bg-indigo-50/40 dark:bg-indigo-900/10">
+                                                <td colSpan="7" className="px-4 sm:px-6 py-2.5 text-[9px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-widest border-y border-indigo-100/50 dark:border-indigo-900/30">
                                                     <div className="flex items-center gap-2">
-                                                        <CalendarIcon size={14} />
-                                                        {dateKey} — {groupMovs.length} Movimientos
+                                                        <CalendarIcon size={12} />
+                                                        {dateKey} — {groupMovs.length} mov.
                                                     </div>
                                                 </td>
                                             </tr>
@@ -285,88 +278,86 @@ export default function MovementHistory() {
                                                 const { time } = formatDateTime(m.fecha);
                                                 const isCancelled = m.estado === 'CANCELADA';
                                                 return (
-                                                    <tr key={`${m.tipo}-${m.id}-${idx}`} className={`group transition-all hover:bg-slate-50/50 dark:hover:bg-slate-700/20 ${isCancelled ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
-                                                        <td className="px-8 py-6 border-none">
-                                                            <div className="flex flex-col">
-                                                                <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 font-mono tracking-tighter">
+                                                    <tr key={`${m.tipo}-${m.id}-${idx}`} className={`group transition-all hover:bg-slate-50/80 dark:hover:bg-slate-700/20 ${isCancelled ? 'opacity-40 grayscale' : ''}`}>
+                                                        {/* Ticket / Hora */}
+                                                        <td className="px-4 sm:px-6 py-4">
+                                                            <div className="flex flex-col gap-0.5">
+                                                                <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 font-mono tracking-tight leading-none">
                                                                     {m.ticket_numero ? `#${m.ticket_numero}` : `F-${m.id.toString().padStart(4, '0')}`}
                                                                 </span>
-                                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1 opacity-60 flex items-center gap-1.5">
-                                                                    <Clock size={10} /> {time}
+                                                                <span className="text-[9px] font-bold text-slate-400 flex items-center gap-1 mt-0.5">
+                                                                    <Clock size={9} /> {time}
                                                                 </span>
                                                             </div>
                                                         </td>
-                                                        <td className="px-8 py-6 text-center border-none">
-                                                            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border ${m.tipo === 'venta'
-                                                                ? 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-800/20'
-                                                                : 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/20'
-                                                                }`}>
-                                                                {m.tipo === 'venta' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                                        {/* Operación */}
+                                                        <td className="px-4 sm:px-6 py-4 text-center">
+                                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wide border ${
+                                                                m.tipo === 'venta'
+                                                                    ? 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-800/30'
+                                                                    : 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/30'
+                                                            }`}>
+                                                                {m.tipo === 'venta' ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
                                                                 {m.tipo}
-                                                            </div>
+                                                            </span>
                                                         </td>
-                                                        <td className="px-8 py-6 border-none">
-                                                            <div className="flex flex-col max-w-[300px]">
-                                                                <div className="flex items-center gap-2 mb-1.5">
-                                                                    <span className={`text-sm font-black text-slate-700 dark:text-slate-200 uppercase tracking-tight group-hover:text-indigo-600 transition-colors truncate ${isCancelled ? 'line-through' : ''}`}>
+                                                        {/* Descripción */}
+                                                        <td className="px-4 sm:px-6 py-4 max-w-[180px] sm:max-w-[260px]">
+                                                            <div className="flex flex-col gap-1">
+                                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                                    <span className={`text-xs font-black text-slate-800 dark:text-white uppercase tracking-tight truncate max-w-[160px] sm:max-w-[220px] group-hover:text-indigo-600 transition-colors ${isCancelled ? 'line-through' : ''}`}>
                                                                         {m.descripcion}
                                                                     </span>
-                                                                    {m.es_mayoreo === 1 && <span className="badge-standard bg-amber-50 dark:bg-amber-900/30 text-amber-600 border-none px-2 py-0.5 text-[8px]">MAYOREO</span>}
+                                                                    {m.es_mayoreo === 1 && <span className="text-[7px] font-black bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0">MAY</span>}
                                                                 </div>
-                                                                <div className="flex flex-col gap-0.5">
-                                                                    {m.cliente_nombre && (
-                                                                        <span className={`text-[11px] font-black uppercase tracking-tight ${m.es_mayoreo === 1 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                                                                            {m.cliente_nombre}
-                                                                        </span>
-                                                                    )}
-                                                                    <div className="flex items-center gap-2 opacity-50 mt-1">
-                                                                        <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                                                            <Store size={10} /> {m.tienda_nombre || 'PRINCIPAL'}
-                                                                        </div>
-                                                                        <span className="text-slate-300">•</span>
-                                                                        <div className="flex items-center gap-1.5 text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                                                            <CreditCard size={10} /> {m.metodo_pago || 'GENERAL'}
-                                                                        </div>
-                                                                    </div>
+                                                                {m.cliente_nombre && (
+                                                                    <span className={`text-[9px] font-black uppercase ${m.es_mayoreo === 1 ? 'text-amber-500' : 'text-slate-400'}`}>
+                                                                        {m.cliente_nombre}
+                                                                    </span>
+                                                                )}
+                                                                <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold">
+                                                                    <span className="flex items-center gap-1"><Store size={8} /> {m.tienda_nombre || 'PRINCIPAL'}</span>
+                                                                    <span>·</span>
+                                                                    <span className="flex items-center gap-1"><CreditCard size={8} /> {m.metodo_pago || 'GENERAL'}</span>
                                                                 </div>
                                                             </div>
                                                         </td>
-                                                        <td className="px-8 py-6 text-center border-none">
-                                                            <span className={`badge-standard border-none px-4 ${isCancelled
-                                                                ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/40'
-                                                                : 'bg-slate-100 text-slate-500 dark:bg-slate-700/50'
-                                                                }`}>
+                                                        {/* Estatus - oculto en móvil */}
+                                                        <td className="px-4 sm:px-6 py-4 text-center hidden sm:table-cell">
+                                                            <span className={`inline-flex px-2.5 py-1 rounded-lg text-[9px] font-black uppercase border ${
+                                                                isCancelled
+                                                                    ? 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/30'
+                                                                    : 'bg-slate-50 text-slate-500 border-slate-100 dark:bg-slate-800 dark:border-slate-700'
+                                                            }`}>
                                                                 {isCancelled ? 'ANULADA' : 'EFECTIVA'}
                                                             </span>
                                                         </td>
-                                                        <td className="px-8 py-6 border-none text-right">
-                                                            <div className="flex flex-col items-end">
-                                                                <span className={`text-xl font-black tracking-tighter ${m.tipo === 'venta' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                                                    {m.tipo === 'venta' ? '+' : '-'}{currency}{Number(m.monto).toFixed(2)}
-                                                                </span>
-                                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest opacity-40">Monto Transado</span>
-                                                            </div>
+                                                        {/* Importe */}
+                                                        <td className="px-4 sm:px-6 py-4 text-right">
+                                                            <span className={`text-base sm:text-lg font-black tracking-tighter ${m.tipo === 'venta' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                                                {m.tipo === 'venta' ? '+' : '-'}{currency}{Number(m.monto).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                                            </span>
                                                         </td>
-                                                        <td className="px-8 py-6 border-none text-center">
+                                                        {/* Responsable - oculto en tablet pequeña */}
+                                                        <td className="px-4 sm:px-6 py-4 text-center hidden md:table-cell">
                                                             <div className="flex flex-col items-center gap-1">
-                                                                <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-indigo-500/20">
-                                                                    <User size={16} />
+                                                                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                                                                    <User size={13} />
                                                                 </div>
-                                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{m.usuario || 'SISTEMA'}</span>
+                                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wide max-w-[80px] truncate">{m.usuario || 'SISTEMA'}</span>
                                                             </div>
                                                         </td>
-                                                        <td className="px-8 py-6 border-none text-right">
-                                                            <div className="flex items-center justify-end gap-2">
-                                                                {m.tipo === 'venta' && (
-                                                                    <button
-                                                                        onClick={() => handleReprint(m)}
-                                                                        className="p-3 rounded-xl hover:bg-indigo-50 text-indigo-600 transition-colors bg-slate-50 dark:bg-slate-800 dark:hover:bg-indigo-900/20"
-                                                                        title="Reimprimir Ticket"
-                                                                    >
-                                                                        <Printer size={20} />
-                                                                    </button>
-                                                                )}
-                                                            </div>
+                                                        {/* Acciones */}
+                                                        <td className="px-4 sm:px-6 py-4 text-center">
+                                                            {m.tipo === 'venta' && (
+                                                                <button
+                                                                    onClick={() => handleReprint(m)}
+                                                                    className="p-2 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-slate-300 hover:text-indigo-600 transition-all active:scale-90"
+                                                                    title="Reimprimir"
+                                                                >
+                                                                    <Printer size={16} />
+                                                                </button>
+                                                            )}
                                                         </td>
                                                     </tr>
                                                 );

@@ -20,6 +20,7 @@ const TABLE_PULL_CONFIG = [
   { table: 'cash_registers',      endpoint: '/turnos',       paginated: false, idField: 'id', appendOnly: true },
   { table: 'inventory_movements', endpoint: '/movimientos',  paginated: false, idField: 'id', appendOnly: true },
   { table: 'expenses',            endpoint: '/gastos',       paginated: false, idField: 'id', appendOnly: true },
+  { table: 'pedidos',             endpoint: '/pedidos',      paginated: false, idField: 'id', appendOnly: true },
 ];
 
 // Tables that can be pushed up to the VPS
@@ -32,6 +33,7 @@ const TABLE_PUSH_CONFIG = {
   expenses:            { endpoint: '/gastos',      method: 'POST', appendOnly: true },
   cash_registers:      { endpoint: '/turnos',      method: 'POST', appendOnly: true },
   inventory_movements: { endpoint: '/movimientos', method: 'POST', appendOnly: true },
+  pedidos:             { endpoint: '/pedidos',     method: 'POST', appendOnly: true },
 };
 
 // Event emitter
@@ -148,11 +150,24 @@ async function pullFromMySQL(localDB, _conflictResolver, token = null, onProgres
             sync_status: 'synced'
           };
 
-          // Stringify object/array fields that SQLite can't store natively
+          // Sanitize values: better-sqlite3 v9+ cannot bind undefined or boolean
           for (const key of Object.keys(localRecord)) {
-            if (localRecord[key] !== null && typeof localRecord[key] === 'object') {
-              localRecord[key] = JSON.stringify(localRecord[key]);
+            const v = localRecord[key];
+            if (v === undefined) {
+              localRecord[key] = null;
+            } else if (typeof v === 'boolean') {
+              localRecord[key] = v ? 1 : 0;
+            } else if (v !== null && typeof v === 'object') {
+              localRecord[key] = JSON.stringify(v);
             }
+          }
+
+          // Table-specific guards for NOT NULL columns the API may omit
+          if (config.table === 'users' && !localRecord.password) {
+            localRecord.password = '';
+          }
+          if (config.table === 'inventory_movements' && !localRecord.producto_id) {
+            continue; // Skip movements with no product reference
           }
 
           localDB.upsert(config.table, localRecord);
@@ -224,6 +239,64 @@ async function pushToMySQL(localDB, token = null) {
             }
           }
 
+          // Al sincronizar una venta offline, adjuntar sus ítems como 'productos'
+          // El servidor requiere este array para procesar la venta y descontar stock
+          if (tableName === 'sales' && !mysql_id) {
+            try {
+              const items = localDB.db.prepare(
+                `SELECT * FROM sale_items WHERE venta_id = ? AND is_deleted = 0`
+              ).all(record.id);
+
+              payload.productos = items.map(item => {
+                let productId = item.producto_id;
+
+                // Convertir formato local 'mysql-N' → número MySQL
+                if (typeof productId === 'string' && productId.startsWith('mysql-')) {
+                  productId = parseInt(productId.replace('mysql-', ''), 10);
+                } else {
+                  // Buscar mysql_id en tabla products por si el id es UUID local
+                  try {
+                    const prod = localDB.db.prepare(
+                      `SELECT mysql_id FROM products WHERE id = ? OR mysql_id = ?`
+                    ).get(item.producto_id, parseInt(item.producto_id, 10) || 0);
+                    if (prod?.mysql_id) productId = prod.mysql_id;
+                    else productId = parseInt(productId, 10);
+                  } catch (_) {
+                    productId = parseInt(productId, 10);
+                  }
+                }
+
+                // Resolver variacion_id de la misma manera
+                let varId = item.variacion_id || null;
+                if (typeof varId === 'string' && varId.startsWith('mysql-')) {
+                  varId = parseInt(varId.replace('mysql-', ''), 10);
+                } else if (varId) {
+                  varId = parseInt(varId, 10) || null;
+                }
+
+                return {
+                  id:          productId,
+                  variacion_id: varId,
+                  cantidad:    item.cantidad,
+                  precio:      item.precio_unitario
+                };
+              }).filter(item => item.id && !isNaN(item.id));
+
+              if (payload.productos.length === 0) {
+                console.warn(`  ⚠️ Venta ${record.id} sin ítems válidos — omitiendo push`);
+                continue;
+              }
+
+              // Asegurar que turno_id y tienda_id sean numéricos para el servidor
+              if (payload.turno_id) payload.turno_id = parseInt(payload.turno_id, 10) || payload.turno_id;
+              if (payload.tienda_id) payload.tienda_id = parseInt(payload.tienda_id, 10) || payload.tienda_id;
+              if (payload.usuario_id) payload.usuario_id = parseInt(payload.usuario_id, 10) || payload.usuario_id;
+            } catch (itemsErr) {
+              console.warn(`  ⚠️ No se pudieron cargar sale_items para venta ${record.id}:`, itemsErr.message);
+              continue;
+            }
+          }
+
           const method = mysql_id ? 'PUT' : 'POST';
           const url = mysql_id
             ? `${API_URL}${config.endpoint}/${mysql_id}`
@@ -238,6 +311,14 @@ async function pushToMySQL(localDB, token = null) {
           if (response.ok) {
             const data = await response.json();
             localDB.markSynced(tableName, record.id, data?.id || data?.insertId);
+            // Cuando una venta se sincroniza, marcar sus sale_items como synced también
+            if (tableName === 'sales') {
+              try {
+                localDB.db.prepare(
+                  `UPDATE sale_items SET sync_status = 'synced' WHERE venta_id = ? AND sync_status = 'pending'`
+                ).run(record.id);
+              } catch (_) {}
+            }
             results.synced++;
             results.tables[tableName].synced++;
           } else {

@@ -538,9 +538,6 @@ export const ventasAPI = {
                 const { items, ...saleBase } = ventaData;
                 
                 const localSale = {
-                    id: saleId,
-                    tienda_id: saleBase.tienda_id || null,
-                    turno_id: saleBase.turno_id || null,
                     id:                saleId,
                     ticket_numero:     ventaData.ticket_numero    || null,
                     tipo:              ventaData.tipo              || 'VENTA',
@@ -689,6 +686,26 @@ export const turnosAPI = {
                 const turnos = await window.electronAPI.localDB.getAll('cash_registers', { where, orderBy: 'fecha_apertura DESC', limit: 1 });
                 
                 if (turnos.length > 0) return turnos[0];
+
+                // Before creating a ghost shift, check if we have the real turno in localStorage
+                try {
+                    const savedTurnoRaw = localStorage.getItem('turnoActivo');
+                    if (savedTurnoRaw) {
+                        const savedTurno = JSON.parse(savedTurnoRaw);
+                        if (savedTurno?.estado === 'ABIERTO' && savedTurno?.id) {
+                            // Save to SQLite so future offline queries find it
+                            try {
+                                await window.electronAPI.localDB.upsert('cash_registers', {
+                                    ...savedTurno,
+                                    id: String(savedTurno.id),
+                                    mysql_id: savedTurno.mysql_id || savedTurno.id,
+                                    sync_status: 'synced'
+                                });
+                            } catch (e) {}
+                            return savedTurno;
+                        }
+                    }
+                } catch (e) {}
 
                 // Race-condition guard: if another call already started creating the fallback, reuse it
                 if (_offlineShiftId) {
@@ -1206,13 +1223,14 @@ export const pedidosAPI = {
             let url = `${API_URL}/pedidos?`;
             if (tiendaId) url += `tienda_id=${tiendaId}&`;
             if (showAll) url += `show_all=true`;
-            const response = await fetch(url, { headers: getAuthHeaders() });
+            const response = await fetchWithTimeout(url, { headers: getAuthHeaders() });
             return await handleResponse(response);
         } catch (error) {
             if (isDesktop() && window.electronAPI?.localDB) {
                 let where = '1=1';
                 if (tiendaId) where += ` AND tienda_id = '${String(tiendaId).replace(/'/g, "''")}'`;
-                return await window.electronAPI.localDB.getAll('pedidos', { where, orderBy: 'created_at DESC' });
+                const rows = await window.electronAPI.localDB.getAll('pedidos', { where, orderBy: 'local_created_at DESC' });
+                return Array.isArray(rows) ? rows : [];
             }
             throw error;
         }
@@ -1221,7 +1239,7 @@ export const pedidosAPI = {
     // Obtener pedido por ID
     getById: async (id) => {
         try {
-            const response = await fetch(`${API_URL}/pedidos/${id}`, { headers: getAuthHeaders() });
+            const response = await fetchWithTimeout(`${API_URL}/pedidos/${id}`, { headers: getAuthHeaders() });
             return await handleResponse(response);
         } catch (error) {
             if (isDesktop() && window.electronAPI?.localDB) {
@@ -1231,8 +1249,71 @@ export const pedidosAPI = {
         }
     },
 
-    // Crear pedido
+    // Crear pedido — guarda localmente en Electron si no hay red
     create: async (pedidoData) => {
+        if (isDesktop() && window.electronAPI?.localDB) {
+            try {
+                const pedidoId = pedidoData.id || `local-pedido-${Date.now()}`;
+                const { detalles, ...pedidoBase } = pedidoData;
+
+                const localPedido = {
+                    id:                     pedidoId,
+                    mysql_id:               null,
+                    tienda_id:              pedidoBase.tienda_id              || null,
+                    tienda_nombre:          pedidoBase.tienda_nombre          || null,
+                    usuario_solicitante_id: pedidoBase.usuario_solicitante_id || pedidoBase.usuario_id || null,
+                    usuario_nombre:         pedidoBase.usuario_nombre         || null,
+                    estado:                 pedidoBase.estado                 || 'PENDIENTE',
+                    subtotal:               pedidoBase.subtotal               || 0,
+                    total:                  pedidoBase.total                  || 0,
+                    envio:                  pedidoBase.envio                  || 0,
+                    notas:                  pedidoBase.notas                  || null,
+                    fecha_programada:       pedidoBase.fecha_programada       || null,
+                    sync_status:            'pending'
+                };
+
+                await window.electronAPI.localDB.insert('pedidos', localPedido);
+
+                // Guardar detalles del pedido
+                const items = detalles || pedidoBase.productos || pedidoBase.items || [];
+                for (const item of items) {
+                    try {
+                        await window.electronAPI.localDB.insert('pedido_detalles', {
+                            id:              `local-pd-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                            pedido_id:       pedidoId,
+                            producto_id:     item.producto_id || item.id || '',
+                            producto_nombre: item.producto_nombre || item.nombre || '',
+                            cantidad:        item.cantidad || 1,
+                            precio_unitario: item.precio_unitario || item.precio || 0,
+                            subtotal:        item.subtotal || (item.cantidad * (item.precio_unitario || item.precio || 0)),
+                            sync_status:     'pending'
+                        });
+                    } catch (e) {
+                        console.warn('Error guardando pedido_detalle local:', e.message);
+                    }
+                }
+
+                // Intentar sincronizar en background
+                fetch(`${API_URL}/pedidos`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify(pedidoData)
+                }).then(async (res) => {
+                    if (res.ok) {
+                        const result = await res.json();
+                        await window.electronAPI.localDB.update('pedidos', pedidoId, {
+                            sync_status: 'synced',
+                            mysql_id: result.id
+                        });
+                    }
+                }).catch(() => {});
+
+                return { id: pedidoId, status: 'saved_locally', ...localPedido };
+            } catch (error) {
+                console.error('Error guardando pedido localmente:', error);
+            }
+        }
+
         const response = await fetch(`${API_URL}/pedidos`, {
             method: 'POST',
             headers: getAuthHeaders(),
@@ -1243,21 +1324,38 @@ export const pedidosAPI = {
 
     // Actualizar estado del pedido
     updateEstado: async (id, data) => {
-        const response = await fetch(`${API_URL}/pedidos/${id}`, {
-            method: 'PUT',
-            headers: getAuthHeaders(),
-            body: JSON.stringify(typeof data === 'string' ? { estado: data } : data)
-        });
-        return handleResponse(response);
+        try {
+            const response = await fetchWithTimeout(`${API_URL}/pedidos/${id}`, {
+                method: 'PUT',
+                headers: getAuthHeaders(),
+                body: JSON.stringify(typeof data === 'string' ? { estado: data } : data)
+            });
+            return handleResponse(response);
+        } catch (error) {
+            if (isDesktop() && window.electronAPI?.localDB) {
+                const updates = typeof data === 'string' ? { estado: data } : data;
+                await window.electronAPI.localDB.update('pedidos', id, { ...updates, sync_status: 'pending' });
+                return { id, status: 'saved_locally', ...updates };
+            }
+            throw error;
+        }
     },
 
     // Eliminar pedido
     delete: async (id) => {
-        const response = await fetch(`${API_URL}/pedidos/${id}`, {
-            method: 'DELETE',
-            headers: getAuthHeaders()
-        });
-        return handleResponse(response);
+        try {
+            const response = await fetchWithTimeout(`${API_URL}/pedidos/${id}`, {
+                method: 'DELETE',
+                headers: getAuthHeaders()
+            });
+            return handleResponse(response);
+        } catch (error) {
+            if (isDesktop() && window.electronAPI?.localDB) {
+                await window.electronAPI.localDB.delete('pedidos', id);
+                return { id, status: 'deleted_locally' };
+            }
+            throw error;
+        }
     }
 };
 

@@ -23,9 +23,13 @@ const hardwareService = {
                     toast.success("Impresión enviada correctamente");
                     return true;
                 }
-                console.warn("Silent print falló, intentando fallbacks...", result.error);
+                // En Electron, no caer en WebUSB/iframe — mostrar error directo
+                toast.error(`Error al imprimir: ${result.error || 'Verifica la impresora en Ajustes'}`);
+                return false;
             } catch (err) {
                 console.error("Error IPC Electron:", err);
+                toast.error("Error de impresión. Verifica la impresora en Ajustes.");
+                return false;
             }
         }
 
@@ -121,28 +125,35 @@ const hardwareService = {
 
     _browserPrint: (html) => {
         return new Promise((resolve) => {
-            const iframe = document.createElement('iframe');
-            iframe.style.position = 'absolute';
-            iframe.style.width = '0px';
-            iframe.style.height = '0px';
-            iframe.style.border = 'none';
-            document.body.appendChild(iframe);
+            // Popup window approach — same method used by Eleventa and professional web POS.
+            // Avoids the iframe bug where Chrome prints the parent page with iframe at -9999px,
+            // causing content to appear far right and blurry from scaling.
+            const win = window.open(
+                '', '_blank',
+                'width=220,height=750,left=100,top=80,scrollbars=no,menubar=no,toolbar=no,location=no,status=no'
+            );
 
-            const doc = iframe.contentWindow.document;
-            doc.open();
-            doc.write(html);
-            doc.close();
+            if (!win) {
+                toast.error('Permite ventanas emergentes (popups) en este sitio para imprimir tickets');
+                resolve(false);
+                return;
+            }
 
-            iframe.onload = () => {
-                setTimeout(() => {
-                    iframe.contentWindow.focus();
-                    iframe.contentWindow.print();
-                    setTimeout(() => {
-                        document.body.removeChild(iframe);
-                        resolve(true);
-                    }, 1000);
-                }, 500);
+            win.document.open();
+            win.document.write(html);
+            win.document.close();
+
+            const doPrint = () => {
+                win.focus();
+                win.print();
+                setTimeout(() => { win.close(); resolve(true); }, 1500);
             };
+
+            if (win.document.readyState === 'complete') {
+                setTimeout(doPrint, 600);
+            } else {
+                win.onload = () => setTimeout(doPrint, 600);
+            }
         });
     }
 };

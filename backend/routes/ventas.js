@@ -1,11 +1,9 @@
 import express from 'express';
 import db from '../config/db.js';
-import { checkTienda } from '../middleware/auth.js';
-
 const router = express.Router();
 
 // Obtener todas las ventas (Resumen)
-router.get('/', checkTienda, async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const { tipo, tienda_id } = req.query;
         let query = `
@@ -46,7 +44,7 @@ router.get('/', checkTienda, async (req, res) => {
 });
 
 // Obtener siguiente número de ticket por turno
-router.get('/proximo-folio', checkTienda, async (req, res) => {
+router.get('/proximo-folio', async (req, res) => {
     try {
         const { tienda_id, turno_id } = req.query;
         const tiendaId = tienda_id || req.user?.tienda_id;
@@ -116,7 +114,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Registrar nueva venta o cotización
-router.post('/', checkTienda, async (req, res) => {
+router.post('/', async (req, res) => {
     const connection = await db.getConnection();
 
     try {
@@ -132,8 +130,8 @@ router.post('/', checkTienda, async (req, res) => {
             // Ignoramos desglose_impuestos y total_impuestos del body por seguridad (SEC-007)
         } = req.body;
 
-        const userId = req.user.id;
-        const tiendaId = req.user.rol === 'admin' ? (req.body.tienda_id || null) : req.user.tienda_id;
+        const userId = req.body.usuario_id || null;
+        const tiendaId = req.body.tienda_id || null;
         const turnoId = req.body.turno_id;
 
         if (!turnoId && tipo === 'VENTA') {

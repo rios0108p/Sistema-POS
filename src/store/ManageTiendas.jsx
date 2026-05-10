@@ -3,7 +3,7 @@ import { tiendasAPI, productosAPI } from "../services/api";
 import { toast } from "react-hot-toast";
 import {
     Store, Plus, Edit2, Trash2, X, Save, Users, Package,
-    DollarSign, MapPin, Phone, RefreshCw, ChevronDown, ChevronUp, Layers
+    DollarSign, MapPin, Phone, RefreshCw, ChevronDown, ChevronUp, Layers, Building2
 } from "lucide-react";
 
 const ManageTiendas = () => {
@@ -231,75 +231,92 @@ const ManageTiendas = () => {
                     </button>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {tiendas.map(tienda => (
-                        <div
-                            key={tienda.id}
-                            className="group relative overflow-hidden card-standard p-0 hover:shadow-2xl hover:shadow-indigo-500/10 transition-all duration-500"
-                        >
-                            <div className="p-8">
-                                <div className="flex items-start justify-between mb-6">
-                                    <div className="flex-1">
-                                        <h3 className="font-bold text-xl text-slate-800 dark:text-white uppercase tracking-tighter leading-none mb-2">{tienda.nombre}</h3>
-                                        <div className="flex flex-wrap gap-2">
-                                            <span className={`badge-standard
-                                                ${tienda.tipo === 'MODELO' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400' : ''}
-                                                ${tienda.tipo === 'TECATE' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400' : ''}
-                                                ${tienda.tipo === 'MIXTA' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-400' : ''}
-                                                ${tienda.tipo === 'GENERAL' ? 'bg-slate-100 text-slate-700 dark:bg-slate-900/20 dark:text-slate-400' : ''}
-                                            `}>
-                                                {tienda.tipo || 'GENERAL'}
-                                            </span>
-                                            <span className="badge-standard bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">Activa</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {tiendas.map(tienda => {
+                        const tipoBg = {
+                            MODELO: 'from-amber-500 to-orange-500',
+                            TECATE: 'from-rose-500 to-pink-500',
+                            MIXTA: 'from-indigo-500 to-violet-600',
+                            GENERAL: 'from-indigo-500 to-indigo-700',
+                        }[tienda.tipo || 'GENERAL'] || 'from-indigo-500 to-indigo-700';
+
+                        return (
+                        <div key={tienda.id} className="group relative overflow-hidden rounded-3xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700/50 shadow-sm hover:shadow-2xl hover:shadow-indigo-500/10 hover:-translate-y-1 transition-all duration-500 flex flex-col">
+                            {/* Color strip top */}
+                            <div className={`h-1.5 w-full bg-gradient-to-r ${tipoBg}`}></div>
+
+                            <div className="p-6 flex-1 flex flex-col">
+                                {/* Header row */}
+                                <div className="flex items-start justify-between mb-5">
+                                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                                        <div className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${tipoBg} flex items-center justify-center shadow-lg flex-shrink-0`}>
+                                            <Store className="text-white" size={20} />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <h3 className="font-black text-base text-slate-800 dark:text-white uppercase tracking-tight leading-none truncate">{tienda.nombre}</h3>
+                                            <div className="flex items-center gap-2 mt-1.5">
+                                                <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg ${
+                                                    tienda.tipo === 'MODELO' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                                    tienda.tipo === 'TECATE' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
+                                                    tienda.tipo === 'MIXTA' ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400' :
+                                                    'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
+                                                }`}>{tienda.tipo || 'GENERAL'}</span>
+                                                <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Activa</span>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className="flex gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
-                                        <button onClick={() => handleEdit(tienda)} className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all">
-                                            <Edit2 size={16} className="text-slate-500" />
+                                    <div className="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
+                                        <button onClick={() => handleEdit(tienda)} className="p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl transition-all" title="Editar">
+                                            <Edit2 size={14} className="text-indigo-500" />
                                         </button>
-                                        <button onClick={() => handleDelete(tienda.id)} className="p-2.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all">
-                                            <Trash2 size={16} className="text-rose-500" />
+                                        <button onClick={() => handleDelete(tienda.id)} className="p-2 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all" title="Eliminar">
+                                            <Trash2 size={14} className="text-rose-500" />
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="space-y-2 mb-6 ml-1">
-                                    {tienda.direccion && (
-                                        <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 font-medium">
-                                            <MapPin size={12} strokeWidth={3} className="text-indigo-500" /> {tienda.direccion}
-                                        </p>
-                                    )}
-                                    {tienda.telefono && (
-                                        <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 font-medium">
-                                            <Phone size={12} strokeWidth={3} className="text-indigo-500" /> {tienda.telefono}
-                                        </p>
-                                    )}
-                                </div>
+                                {/* Info */}
+                                {(tienda.direccion || tienda.telefono) && (
+                                    <div className="space-y-1.5 mb-5">
+                                        {tienda.direccion && (
+                                            <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-medium">
+                                                <MapPin size={11} className="text-indigo-400 flex-shrink-0" /> <span className="truncate">{tienda.direccion}</span>
+                                            </p>
+                                        )}
+                                        {tienda.telefono && (
+                                            <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-medium">
+                                                <Phone size={11} className="text-indigo-400 flex-shrink-0" /> {tienda.telefono}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
 
-                                <div className="grid grid-cols-3 gap-3 text-center mb-8">
-                                    <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-2xl border dark:border-slate-700/50">
-                                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-1">Caja</p>
-                                        <p className="font-bold text-indigo-600 dark:text-indigo-400 tracking-tighter text-sm ">${Number(tienda.monto_base || 0).toFixed(0)}</p>
+                                {/* Stats */}
+                                <div className="grid grid-cols-3 gap-2.5 mb-5 mt-auto">
+                                    <div className="bg-indigo-50/60 dark:bg-indigo-900/20 p-3 rounded-2xl text-center border border-indigo-100/50 dark:border-indigo-800/20">
+                                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Caja</p>
+                                        <p className="font-black text-indigo-600 dark:text-indigo-400 text-sm tracking-tighter">${Number(tienda.monto_base || 0).toLocaleString()}</p>
                                     </div>
-                                    <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-2xl border dark:border-slate-700/50">
-                                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-1">Equipo</p>
-                                        <p className="font-bold text-emerald-600 dark:text-emerald-400 tracking-tighter text-sm ">{tienda.total_empleados || 0}</p>
+                                    <div className="bg-emerald-50/60 dark:bg-emerald-900/20 p-3 rounded-2xl text-center border border-emerald-100/50 dark:border-emerald-800/20">
+                                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Equipo</p>
+                                        <p className="font-black text-emerald-600 dark:text-emerald-400 text-sm">{tienda.total_empleados || 0}</p>
                                     </div>
-                                    <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-2xl border dark:border-slate-700/50">
-                                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-1">Stock</p>
-                                        <p className="font-bold text-amber-600 dark:text-amber-400 tracking-tighter text-sm ">{tienda.total_productos || 0}</p>
+                                    <div className="bg-amber-50/60 dark:bg-amber-900/20 p-3 rounded-2xl text-center border border-amber-100/50 dark:border-amber-800/20">
+                                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Stock</p>
+                                        <p className="font-black text-amber-600 dark:text-amber-400 text-sm">{tienda.total_productos || 0}</p>
                                     </div>
                                 </div>
 
                                 <button
                                     onClick={() => openProductosModal(tienda)}
-                                    className="btn-secondary w-full py-4 uppercase text-[10px] tracking-widest gap-2"
+                                    className="w-full py-3 rounded-2xl bg-slate-50 dark:bg-slate-700/50 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 border border-slate-200 dark:border-slate-600 hover:border-indigo-200 dark:hover:border-indigo-800 font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2"
                                 >
-                                    <Package size={14} strokeWidth={3} /> VINCULAR PRODUCTOS
+                                    <Package size={13} /> Vincular Productos
                                 </button>
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 
@@ -307,16 +324,33 @@ const ManageTiendas = () => {
             {showModal && (
                 <div className="modal-overlay">
                     <div className="modal-container max-w-md w-full p-0 overflow-hidden">
-                        <div className="modal-header p-8 flex items-center justify-between">
-                            <h3 className="text-2xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter leading-none ">
-                                {editingTienda ? 'Actualizar Sede' : 'Nueva Sucursal'}
-                            </h3>
-                            <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-rose-500 transition-all">
-                                <X size={24} />
-                            </button>
+                        {/* Gradient Header */}
+                        <div className="relative bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-600 p-7 overflow-hidden">
+                            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                                <div className="absolute -top-8 -right-8 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
+                                <div className="absolute -bottom-4 -left-4 w-24 h-24 bg-black/10 rounded-full blur-xl"></div>
+                            </div>
+                            <div className="relative z-10 flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="p-3 bg-white/20 backdrop-blur-sm rounded-2xl border border-white/30">
+                                        <Building2 className="text-white" size={22} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-xl font-black text-white uppercase tracking-tight leading-none">
+                                            {editingTienda ? 'Actualizar Sede' : 'Nueva Sucursal'}
+                                        </h3>
+                                        <p className="text-indigo-200/80 text-[10px] font-black uppercase tracking-widest mt-1">
+                                            {editingTienda ? 'Modificar datos del punto de venta' : 'Agregar punto de venta a la red'}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setShowModal(false)} className="p-2 bg-white/20 hover:bg-white/30 rounded-xl text-white transition-all active:scale-90">
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="p-10 space-y-6">
+                        <form onSubmit={handleSubmit} className="p-7 space-y-5">
                             <div>
                                 <label className="label-standard">Nombre Comercial *</label>
                                 <input
@@ -400,20 +434,20 @@ const ManageTiendas = () => {
                                 />
                             </div>
 
-                            <div className="pt-4 flex flex-col gap-3">
-                                <button
-                                    type="submit"
-                                    className="btn-primary w-full shadow-2xl"
-                                >
-                                    <Save size={18} />
-                                    {editingTienda ? 'Confirmar Cambios' : 'Inicializar Sede'}
-                                </button>
+                            <div className="pt-4 flex gap-3">
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
-                                    className="btn-secondary w-full justify-center"
+                                    className="flex-1 py-4 px-4 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-black text-sm uppercase tracking-widest rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-600 transition-all active:scale-95"
                                 >
                                     Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="flex-[2] py-4 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-black text-sm uppercase tracking-widest rounded-2xl shadow-lg shadow-indigo-500/30 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Save size={16} />
+                                    {editingTienda ? 'Confirmar Cambios' : 'Inicializar Sede'}
                                 </button>
                             </div>
                         </form>
@@ -424,18 +458,27 @@ const ManageTiendas = () => {
             {/* Modal Productos */}
             {showProductosModal && selectedTienda && (
                 <div className="modal-overlay">
-                    <div className="modal-container max-w-5xl w-full max-h-[85vh] p-0 overflow-hidden flex flex-col">
-                        <div className="modal-header p-8 flex items-center justify-between border-b dark:border-slate-700/50">
-                            <div>
-                                <h3 className="text-2xl font-bold text-slate-800 dark:text-white uppercase tracking-tighter leading-none flex items-center gap-3">
-                                    <Package className="text-indigo-500" size={28} />
-                                    Catálogo: {selectedTienda.nombre}
-                                </h3>
-                                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-2">Personaliza el inventario específico para este punto de venta</p>
+                    <div className="modal-container max-w-5xl w-full max-h-[90vh] p-0 overflow-hidden flex flex-col">
+                        <div className="relative bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-600 p-7 overflow-hidden">
+                            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                                <div className="absolute -top-8 -right-8 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
                             </div>
-                            <button onClick={() => setShowProductosModal(false)} className="text-slate-400 hover:text-rose-500 transition-all">
-                                <X size={32} />
-                            </button>
+                            <div className="relative z-10 flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="p-3 bg-white/20 backdrop-blur-sm rounded-2xl border border-white/30">
+                                        <Package className="text-white" size={22} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-xl font-black text-white uppercase tracking-tight leading-none">
+                                            Catálogo: <span className="text-indigo-200">{selectedTienda.nombre}</span>
+                                        </h3>
+                                        <p className="text-indigo-200/80 text-[10px] font-black uppercase tracking-widest mt-1">Inventario específico para este punto de venta</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setShowProductosModal(false)} className="p-2 bg-white/20 hover:bg-white/30 rounded-xl text-white transition-all active:scale-90">
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
 
                         <div className="p-8 grid grid-cols-1 lg:grid-cols-2 gap-8 overflow-y-auto flex-1 custom-scrollbar">
@@ -554,8 +597,8 @@ const ManageTiendas = () => {
                                 </div>
                             </div>
                         </div>
-                        <div className="p-8 border-t dark:border-slate-700/50 flex justify-center bg-slate-50 dark:bg-slate-900/50">
-                            <button onClick={() => setShowProductosModal(false)} className="btn-primary w-auto px-10">
+                        <div className="p-5 border-t dark:border-slate-700/50 flex justify-center bg-slate-50 dark:bg-slate-900/50">
+                            <button onClick={() => setShowProductosModal(false)} className="px-10 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:scale-[1.02] active:scale-95 transition-all">
                                 Cerrar Panel
                             </button>
                         </div>

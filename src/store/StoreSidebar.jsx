@@ -5,7 +5,7 @@ import {
   LogOut, Settings, X, Clock, Ban, ChevronRight, Tag,
   LayoutDashboard, CreditCard, ReceiptText, Banknote, Users2,
   Archive, Package, Truck, Store, DollarSign, UserCircle2,
-  Building2, Settings2, Lock, Download, UserPlus, PlusCircle
+  Building2, Settings2, Lock, Download, UserPlus, PlusCircle, FileText
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { configuracionAPI, getImageUrl, dashboardAPI } from "../services/api";
@@ -90,6 +90,7 @@ const StoreSidebar = ({ storeInfo, onClose, isCollapsed }) => {
     {
       title: " Administración",
       links: [
+        { name: "REPORTES", href: "/store/reportes", icon: FileText, permission: "dashboard" },
         { name: "USUARIOS", href: "/store/users", icon: UserCircle2, permission: "usuarios" },
         { name: "TIENDAS", href: "/store/tiendas", icon: Building2, permission: "tiendas" },
         { name: "PROMOCIONES", href: "/store/promociones", icon: Tag, permission: "configuracion" },

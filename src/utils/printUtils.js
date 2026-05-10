@@ -115,9 +115,9 @@ function generateTicketHtml(data) {
   html, body {
     font-family: 'Courier New', Courier, monospace;
     font-size: 8pt;
-    width: 46mm; /* Ajustado de 52mm a 46mm para impresoras de 58mm (área imprimible ~48mm) */
-    margin: 0 auto;
-    padding: 2mm 1mm 0 1mm; /* Reducido el padding izquierdo para centrar */
+    width: 48mm;
+    margin: 0;
+    padding: 2mm 0 0 0;
     color: #000;
   }
   .logo { text-align:center; font-size:11pt; font-weight:900; margin-bottom:1mm; }
@@ -238,9 +238,9 @@ function generateCorteHtml(data) {
   html, body {
     font-family: 'Courier New', Courier, monospace;
     font-size: 8pt;
-    width: 46mm;
-    margin: 0 auto;
-    padding: 2mm 1mm 0 1mm;
+    width: 48mm;
+    margin: 0;
+    padding: 2mm 0 0 0;
     color: #000;
   }
   .logo { text-align:center; font-size:11pt; font-weight:900; margin-bottom:1mm; }
@@ -354,7 +354,7 @@ function generateMovimientoHtml(data) {
 <style>
   @page { size: 58mm auto; margin: 0; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  html, body { font-family:'Courier New',Courier,monospace; font-size:8pt; width:46mm; margin:0 auto; padding:2mm 1mm 0 1mm; color:#000; }
+  html, body { font-family:'Courier New',Courier,monospace; font-size:8pt; width:48mm; margin:0; padding:2mm 0 0 0; color:#000; }
   .center { text-align:center; }
   .logo { text-align:center; font-size:11pt; font-weight:900; margin-bottom:1mm; }
   .biz-sub { text-align:center; font-size:7pt; line-height:1.5; }
