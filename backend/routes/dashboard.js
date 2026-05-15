@@ -119,9 +119,13 @@ router.get('/', async (req, res) => {
         const vPrevFilter = buildFilter(prevDateFilter);
         const [prevVentas] = await db.query(`SELECT COUNT(*) as total, COALESCE(SUM(total), 0) as monto FROM ventas WHERE tipo = 'VENTA' AND estado = 'COMPLETADA' ${vPrevFilter}`, prevFilterParams);
 
-        // Total de compras (con filtro)
-        // Nota: compras aún no tiene tienda_id/turno_id en todas las versiones, pero aplicamos tienda_id si existe
-        const [totalCompras] = await db.query(`SELECT COUNT(*) as total, COALESCE(SUM(total), 0) as monto FROM compras WHERE 1=1 ${dateFilter}`, []);
+        // Total de compras (con filtro de tienda y fecha)
+        const cTotalFilter = buildFilter(dateFilter, 'c.');
+        const [totalCompras] = await db.query(`SELECT COUNT(*) as total, COALESCE(SUM(total), 0) as monto FROM compras c WHERE 1=1 ${cTotalFilter}`, filterParams);
+
+        // Compras período anterior (para tendencia)
+        const cPrevFilter = buildFilter(prevDateFilter, 'c.');
+        const [prevCompras] = await db.query(`SELECT COALESCE(SUM(total), 0) as monto FROM compras c WHERE 1=1 ${cPrevFilter}`, prevFilterParams);
 
         // Cálculo de Ganancia Real (Revenue - Costo de ventas)
         const profitFilter = buildFilter(dateFilter, 'v.');
@@ -217,10 +221,11 @@ router.get('/', async (req, res) => {
             ORDER BY label ASC
         `, filterParams);
 
+        const cChartFilter = buildFilter(dateFilter, 'c.');
         const [gastosData] = await db.query(`
-            SELECT DATE_FORMAT(fecha, '${mysqlFormat}') as label, COALESCE(SUM(total), 0) as gastos
-            FROM compras WHERE 1=1 ${dateFilter} GROUP BY label ORDER BY label ASC
-        `);
+            SELECT DATE_FORMAT(c.fecha, '${mysqlFormat}') as label, COALESCE(SUM(c.total), 0) as gastos
+            FROM compras c WHERE 1=1 ${cChartFilter} GROUP BY label ORDER BY label ASC
+        `, filterParams);
 
         const ingresosGastosMap = new Map();
         ingresosVsGastos.forEach(item => ingresosGastosMap.set(item.label, { label: item.label, ingresos: parseFloat(item.ingresos), gastos: 0 }));
@@ -300,6 +305,10 @@ router.get('/', async (req, res) => {
 
         const gastoActual = parseFloat(totalGastos[0]?.monto || 0);
         const gastoAnterior = parseFloat(prevGastos[0]?.monto || 0);
+        const comprasActual = parseFloat(totalCompras[0]?.monto || 0);
+        const comprasAnterior = parseFloat(prevCompras[0]?.monto || 0);
+        const egresosTotalesActual = gastoActual + comprasActual;
+        const egresosTotalesAnterior = gastoAnterior + comprasAnterior;
 
         const calcularTendencia = (actual, anterior) => {
             if (anterior === 0) return actual > 0 ? 100 : 0;
@@ -328,9 +337,11 @@ router.get('/', async (req, res) => {
             financiero: {
                 ingresos: ingresoActual,
                 costo: parseFloat(profitData[0]?.cost || 0),
-                gastos: gastoActual,
+                gastos_operativos: gastoActual,
+                compras: comprasActual,
+                gastos: egresosTotalesActual,
                 ganancia_bruta: gananciaActual,
-                ganancia_neta: gananciaActual - gastoActual
+                ganancia_neta: gananciaActual - egresosTotalesActual
             },
             ventasRecientes,
             productosStock: productos,
@@ -349,9 +360,10 @@ router.get('/', async (req, res) => {
             mejorTienda: mejorTienda[0] || null,
             tendencias: {
                 ingresos: parseFloat(calcularTendencia(ingresoActual, ingresoAnterior)),
-                ganancia: parseFloat(calcularTendencia(gananciaActual - gastoActual, gananciaAnterior - gastoAnterior)),
+                ganancia: parseFloat(calcularTendencia(gananciaActual - egresosTotalesActual, gananciaAnterior - egresosTotalesAnterior)),
                 ventas: parseFloat(calcularTendencia(ventasActual, ventasAnterior)),
-                gastos: parseFloat(calcularTendencia(gastoActual, gastoAnterior))
+                gastos: parseFloat(calcularTendencia(egresosTotalesActual, egresosTotalesAnterior)),
+                compras: parseFloat(calcularTendencia(comprasActual, comprasAnterior))
             }
         });
     } catch (error) {

@@ -56,9 +56,14 @@ const RegistrarCompras = () => {
     }
   }, [searchParams, productos]);
 
-  const cargarProductos = async () => {
+  const cargarProductos = async (tiendaId) => {
     try {
-      const data = await productosAPI.getAll();
+      let data;
+      if (tiendaId && tiendaId !== '0' && tiendaId !== '') {
+        data = await tiendasAPI.getProductos(tiendaId);
+      } else {
+        data = await productosAPI.getAll();
+      }
       setProductos(data || []);
     } catch (error) {
       console.error("Error al cargar productos", error);
@@ -103,10 +108,23 @@ const RegistrarCompras = () => {
     }
   };
 
+  // Carga inicial: productos de la tienda del usuario o todos si es admin sin tienda
   useEffect(() => {
-    cargarProductos();
+    const initialTiendaId = user?.rol === 'admin' ? null : user?.tienda_id;
+    cargarProductos(initialTiendaId);
     cargarProveedores();
     cargarTiendas();
+  }, []);
+
+  // Admin: re-cargar productos cuando cambia la tienda destino
+  useEffect(() => {
+    if (user?.rol === 'admin') {
+      cargarProductos(form.tienda_id || null);
+    }
+  }, [form.tienda_id]);
+
+  // Teclado: F2 y F9
+  useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'F2') {
         e.preventDefault();
