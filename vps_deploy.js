@@ -2,6 +2,7 @@ import { Client } from 'ssh2';
 import ClientSFTP from 'ssh2-sftp-client';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 
 const config = {
     host: '187.77.218.205',
@@ -20,7 +21,12 @@ async function deploy() {
 
     try {
         console.log('--- STARTING DEPLOYMENT ---');
-        
+
+        // 0. Recreate dist.zip from current dist/ folder
+        console.log('Creating dist.zip from dist/...');
+        execSync('powershell -Command "Compress-Archive -Path dist/* -DestinationPath dist.zip -Force"', { stdio: 'inherit' });
+        console.log('dist.zip created.');
+
         // 1. Upload ZIP via SFTP
         console.log(`Connecting to SFTP on ${config.host}...`);
         try {

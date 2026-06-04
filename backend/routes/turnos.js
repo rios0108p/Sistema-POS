@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'crypto';
 import db from '../config/db.js';
 
 const router = express.Router();
@@ -86,6 +87,78 @@ router.get('/activo', async (req, res) => {
     } catch (error) {
         console.error('Error obteniendo turno activo:', error);
         res.status(500).json({ error: 'Error obteniendo turno activo' });
+    }
+});
+
+// ==================== MOVIMIENTOS DE CAJA ====================
+
+// Auto-create table on first use (idempotent)
+const setupCajaMovimientos = async () => {
+    try {
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS caja_movimientos (
+                id VARCHAR(36) PRIMARY KEY,
+                turno_id INT NOT NULL,
+                tipo VARCHAR(50) NOT NULL,
+                monto DECIMAL(10,2) NOT NULL,
+                descripcion TEXT,
+                fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_turno_id (turno_id),
+                INDEX idx_fecha (fecha)
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+        `);
+    } catch (err) {
+        if (!err.message?.includes('already exists')) {
+            console.error('caja_movimientos table setup error:', err.message);
+        }
+    }
+};
+setupCajaMovimientos();
+
+// Obtener movimientos de caja (bulk sync pull)
+router.get('/movimientos-caja', async (req, res) => {
+    try {
+        const { tienda_id, desde } = req.query;
+        let query = `
+            SELECT cm.id, cm.turno_id, cm.tipo, cm.monto, cm.descripcion, cm.fecha, cm.updated_at
+            FROM caja_movimientos cm
+            JOIN turnos t ON cm.turno_id = t.id
+            WHERE 1=1
+        `;
+        const params = [];
+        if (tienda_id) { query += ' AND t.tienda_id = ?'; params.push(tienda_id); }
+        if (desde) { query += ' AND cm.fecha >= ?'; params.push(desde); }
+        else { query += ' AND cm.fecha >= DATE_SUB(NOW(), INTERVAL 30 DAY)'; }
+        query += ' ORDER BY cm.fecha DESC LIMIT 1000';
+        const [rows] = await db.query(query, params);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error al obtener movimientos de caja:', error);
+        res.status(500).json({ error: 'Error al obtener movimientos de caja' });
+    }
+});
+
+// Registrar movimiento de caja
+router.post('/movimientos-caja', async (req, res) => {
+    try {
+        const { turno_id, tipo, monto, descripcion, fecha } = req.body;
+        if (!turno_id || !tipo || monto == null) {
+            return res.status(400).json({ error: 'turno_id, tipo y monto son requeridos' });
+        }
+        const id = req.body.id || randomUUID();
+        await db.query(
+            `INSERT INTO caja_movimientos (id, turno_id, tipo, monto, descripcion, fecha)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE tipo = VALUES(tipo), monto = VALUES(monto),
+             descripcion = VALUES(descripcion), fecha = VALUES(fecha)`,
+            [id, parseInt(turno_id), tipo, parseFloat(monto), descripcion || null,
+             fecha ? new Date(fecha).toISOString().slice(0, 19).replace('T', ' ') : null]
+        );
+        res.json({ id, message: 'Movimiento de caja registrado' });
+    } catch (error) {
+        console.error('Error al registrar movimiento de caja:', error);
+        res.status(500).json({ error: 'Error al registrar movimiento de caja' });
     }
 });
 
@@ -232,29 +305,37 @@ router.post('/abrir', async (req, res) => {
 
 // Cerrar turno
 router.post('/:id/cerrar', async (req, res) => {
+    const connection = await db.getConnection();
     try {
         const { id } = req.params;
         const { monto_final, notas } = req.body;
 
-        // Obtener turno
-        const [turno] = await db.query('SELECT * FROM turnos WHERE id = ? AND estado = ?', [id, 'ABIERTO']);
+        await connection.beginTransaction();
+
+        // FOR UPDATE bloquea la fila: si dos requests llegan al mismo tiempo,
+        // la segunda espera a que la primera termine y luego ve el turno ya CERRADO.
+        const [turno] = await connection.query(
+            'SELECT * FROM turnos WHERE id = ? AND estado = ? FOR UPDATE',
+            [id, 'ABIERTO']
+        );
         if (turno.length === 0) {
+            await connection.rollback();
             return res.status(404).json({ error: 'Turno no encontrado o ya cerrado' });
         }
 
         // Calcular totales del turno
-        const [totales] = await db.query(`
-            SELECT 
+        const [totales] = await connection.query(`
+            SELECT
                 COUNT(*) as total_ventas,
                 COALESCE(SUM(total), 0) as total_monto,
                 COALESCE(SUM(CASE WHEN es_mayoreo = 1 THEN total ELSE 0 END), 0) as total_mayoreo
-            FROM ventas 
+            FROM ventas
             WHERE turno_id = ? AND tipo = 'VENTA' AND estado = 'COMPLETADA'
         `, [id]);
 
         // Calcular por método de pago
-        const [porMetodo] = await db.query(`
-            SELECT 
+        const [porMetodo] = await connection.query(`
+            SELECT
                 vp.metodo,
                 COALESCE(SUM(vp.monto), 0) as total
             FROM ventas_pagos vp
@@ -264,8 +345,8 @@ router.post('/:id/cerrar', async (req, res) => {
         `, [id]);
 
         // Calcular movimientos de efectivo (gastos/entradas)
-        const [movimientos] = await db.query(`
-            SELECT 
+        const [movimientos] = await connection.query(`
+            SELECT
                 COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN monto ELSE 0 END), 0) as entradas,
                 COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN monto ELSE 0 END), 0) as salidas
             FROM gastos
@@ -278,63 +359,37 @@ router.post('/:id/cerrar', async (req, res) => {
         const totalEntradas = movimientos[0]?.entradas || 0;
         const totalSalidas = movimientos[0]?.salidas || 0;
 
-        // Calcular diferencia (monto_final vs ventas_efectivo + entradas - salidas)
-        // El arqueo es lo que queda en caja: Ventas en Efectivo + Lo que entró - Lo que salió
         const esperadoEnCaja = (parseFloat(turno[0].monto_inicial || 0) + parseFloat(ventasEfectivo || 0) + parseFloat(totalEntradas || 0)) - parseFloat(totalSalidas || 0);
         const diferencia = parseFloat(monto_final || 0) - esperadoEnCaja;
 
-        // Actualizar turno
-        try {
-            await db.query(`
-                UPDATE turnos SET
-                    fecha_cierre = NOW(),
-                    monto_final = ?,
-                    ventas_efectivo = ?,
-                    ventas_tarjeta = ?,
-                    ventas_transferencia = ?,
-                    ventas_mayoreo = ?,
-                    total_ventas = ?,
-                    total_monto = ?,
-                    diferencia = ?,
-                    notas = ?,
-                    estado = 'CERRADO'
-                WHERE id = ?
-            `, [
-                monto_final || 0,
-                ventasEfectivo,
-                ventasTarjeta,
-                ventasTransferencia,
-                totales[0].total_mayoreo,
-                totales[0].total_ventas,
-                totales[0].total_monto,
-                diferencia,
-                notas || '',
-                id
-            ]);
-        } catch (updateError) {
-            // Auto-migración si falta la columna ventas_mayoreo
-            if (updateError.code === 'ER_BAD_FIELD_ERROR' && updateError.message.includes('ventas_mayoreo')) {
-                await db.query('ALTER TABLE turnos ADD COLUMN ventas_mayoreo DECIMAL(10,2) DEFAULT 0 AFTER ventas_transferencia');
-                // Re-intentar
-                await db.query(`
-                    UPDATE turnos SET
-                        fecha_cierre = NOW(),
-                        monto_final = ?,
-                        ventas_efectivo = ?,
-                        ventas_tarjeta = ?,
-                        ventas_transferencia = ?,
-                        ventas_mayoreo = ?,
-                        total_ventas = ?,
-                        total_monto = ?,
-                        diferencia = ?,
-                        notas = ?,
-                        estado = 'CERRADO'
-                    WHERE id = ?
-                `, [monto_final || 0, ventasEfectivo, ventasTarjeta, ventasTransferencia, totales[0].total_mayoreo, totales[0].total_ventas, totales[0].total_monto, diferencia, notas || '', id]);
-            } else {
-                throw updateError;
-            }
-        }
+        await connection.query(`
+            UPDATE turnos SET
+                fecha_cierre = NOW(),
+                monto_final = ?,
+                ventas_efectivo = ?,
+                ventas_tarjeta = ?,
+                ventas_transferencia = ?,
+                ventas_mayoreo = ?,
+                total_ventas = ?,
+                total_monto = ?,
+                diferencia = ?,
+                notas = ?,
+                estado = 'CERRADO'
+            WHERE id = ?
+        `, [
+            monto_final || 0,
+            ventasEfectivo,
+            ventasTarjeta,
+            ventasTransferencia,
+            totales[0].total_mayoreo,
+            totales[0].total_ventas,
+            totales[0].total_monto,
+            diferencia,
+            notas || '',
+            id
+        ]);
+
+        await connection.commit();
 
         res.json({
             message: 'Turno cerrado exitosamente',
@@ -352,11 +407,23 @@ router.post('/:id/cerrar', async (req, res) => {
             }
         });
     } catch (error) {
+        await connection.rollback();
         console.error('Error detallado cerrando turno:', error);
-        res.status(500).json({ 
-            error: 'Error cerrando turno', 
-            details: error.message 
+        // Auto-migración si falta la columna ventas_mayoreo: agregar y pedir reintento
+        if (error.code === 'ER_BAD_FIELD_ERROR' && error.message.includes('ventas_mayoreo')) {
+            try {
+                await db.query('ALTER TABLE turnos ADD COLUMN ventas_mayoreo DECIMAL(10,2) DEFAULT 0 AFTER ventas_transferencia');
+                return res.status(503).json({ error: 'Actualización aplicada. Por favor, intenta cerrar el turno nuevamente.' });
+            } catch (migErr) {
+                console.error('Error en migración de ventas_mayoreo:', migErr);
+            }
+        }
+        res.status(500).json({
+            error: 'Error cerrando turno',
+            details: error.message
         });
+    } finally {
+        connection.release();
     }
 });
 

@@ -385,7 +385,7 @@ export default function Reportes() {
                     <p className="text-[10px] text-slate-400">{p.cantidad_vendida} uds</p>
                   </div>
                   <span className="text-[11px] font-black text-indigo-600 dark:text-indigo-400 flex-shrink-0">
-                    {currency}{parseFloat(p.total_generado || 0).toFixed(0)}
+                    {currency}{parseFloat(p.total_generado || 0).toFixed(2)}
                   </span>
                 </div>
               ))}

@@ -3,14 +3,24 @@ import db from '../config/db.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_key_123';
 
+// Máximo 10 intentos de login cada 15 minutos por IP
+const loginRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Demasiados intentos de inicio de sesión. Intenta de nuevo en 15 minutos.' }
+});
+
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', loginRateLimiter, async (req, res) => {
     const { username, password } = req.body;
 
     try {
@@ -21,10 +31,6 @@ router.post('/login', async (req, res) => {
             LEFT JOIN tiendas t ON u.tienda_id = t.id
             WHERE u.nombre_usuario = ?
         `, [username]);
-
-        console.log('🔍 LOGIN ATTEMPT:', { username, passedPassword: !!password });
-        console.log('🔍 LOGIN RESULT:', rows.length > 0 ? 'USER FOUND' : 'USER NOT FOUND');
-        if (rows.length > 0) console.log('🔍 USER DATA:', rows[0].nombre_usuario, rows[0].password.substring(0, 10) + '...');
 
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Usuario no encontrado' });
@@ -102,6 +108,26 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// GET /me — devuelve datos del usuario actual según el token JWT
+router.get('/me', async (req, res) => {
+    const token = req.headers['authorization']?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'No hay token' });
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const [rows] = await db.query(
+            'SELECT id, nombre_usuario, rol, tienda_id, turno_trabajo, permisos FROM usuarios WHERE id = ?',
+            [decoded.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+        const u = rows[0];
+        u.permisos = (u.permisos && typeof u.permisos === 'string') ? JSON.parse(u.permisos) : (u.permisos || null);
+        res.json(u);
+    } catch (error) {
+        res.status(401).json({ error: 'Token inválido' });
+    }
+});
+
 // Verificar Token (opcional pero útil)
 router.get('/verify', async (req, res) => {
     const token = req.headers['authorization']?.split(' ')[1];
@@ -118,18 +144,17 @@ router.get('/verify', async (req, res) => {
 
 // Actualizar Perfil propio
 router.put('/update-profile', async (req, res) => {
-    const userId = req.user.id;
-    const { username, password } = req.body;
+    const { id, username, password } = req.body;
 
     try {
         let query = 'UPDATE usuarios SET nombre_usuario = ? WHERE id = ?';
-        let params = [username, userId];
+        let params = [username, id];
 
         if (password && password.trim() !== '') {
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(password, salt);
             query = 'UPDATE usuarios SET nombre_usuario = ?, password = ? WHERE id = ?';
-            params = [username, hashedPassword, userId];
+            params = [username, hashedPassword, id];
         }
 
         await db.query(query, params);

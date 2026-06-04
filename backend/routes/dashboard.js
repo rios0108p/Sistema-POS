@@ -8,15 +8,8 @@ router.get('/', async (req, res) => {
     const { range, tienda_id, turno_id } = req.query; // day, week, month, year, tienda_id, turno_id
     let dateFilter = '';
     let prevDateFilter = '';
-    let tiendaFilter = '';
-    let turnoFilter = '';
-
-    if (tienda_id) {
-        tiendaFilter = 'AND tienda_id = ?';
-    }
 
     if (turno_id) {
-        turnoFilter = 'AND turno_id = ?';
         // Si hay turno, usualmente no necesitamos filtro de fecha ya que el turno define el periodo
         dateFilter = '';
         prevDateFilter = 'AND 1=0'; // No comparar con anterior si filtramos por un turno específico
@@ -158,12 +151,12 @@ router.get('/', async (req, res) => {
         // Ventas por categoría
         const catFilter = buildFilter(dateFilter, 'v.');
         const [ventasPorCategoria] = await db.query(`
-            SELECT p.categoria, COUNT(DISTINCT v.id) as ventas, COALESCE(SUM(dv.subtotal), 0) as total
+            SELECT COALESCE(p.categoria, 'Sin Categoría') as categoria, COUNT(DISTINCT v.id) as ventas, COALESCE(SUM(dv.subtotal), 0) as total
             FROM detalle_ventas dv
             JOIN ventas v ON dv.venta_id = v.id
             JOIN productos p ON dv.producto_id = p.id
             WHERE v.tipo = 'VENTA' AND v.estado = 'COMPLETADA' ${catFilter}
-            GROUP BY p.categoria
+            GROUP BY COALESCE(p.categoria, 'Sin Categoría')
             ORDER BY total DESC
         `, filterParams);
 

@@ -28,16 +28,16 @@ export const NetworkProvider = ({ children }) => {
 
   // Real connectivity check — pings our actual VPS, not just the router
   const checkRealConnectivity = useCallback(async () => {
+    // Web version: skip VPS ping, always online (server-side renders handle this)
+    if (!window.electronAPI?.isDesktop) return true;
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seconds instead of 3
-
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       const response = await fetch(VPS_HEALTH_URL, {
         method: 'GET',
         signal: controller.signal,
         cache: 'no-store'
       });
-
       clearTimeout(timeoutId);
       return response.ok;
     } catch {

@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../config/db.js';
-import { checkTienda } from '../middleware/auth.js';
+import { checkTienda, isAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -8,8 +8,8 @@ const router = express.Router();
 // TIENDAS CRUD
 // ========================================
 
-// Obtener todas las tiendas
-router.get('/', async (req, res) => {
+// Obtener todas las tiendas (solo admin)
+router.get('/', isAdmin, async (req, res) => {
     try {
         const [rows] = await db.query(`
             SELECT t.*, 
@@ -42,8 +42,8 @@ router.get('/:id', checkTienda, async (req, res) => {
     }
 });
 
-// Crear nueva tienda
-router.post('/', async (req, res) => {
+// Crear nueva tienda (solo admin)
+router.post('/', isAdmin, async (req, res) => {
     try {
         const { nombre, tipo, direccion, telefono, monto_base, ticket_header, ticket_footer, rfc } = req.body;
 
@@ -66,8 +66,8 @@ router.post('/', async (req, res) => {
     }
 });
 
-// Actualizar tienda
-router.put('/:id', async (req, res) => {
+// Actualizar tienda (solo admin)
+router.put('/:id', isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { nombre, tipo, direccion, telefono, monto_base, activa, ticket_header, ticket_footer, rfc } = req.body;
@@ -84,8 +84,8 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// Eliminar tienda
-router.delete('/:id', async (req, res) => {
+// Eliminar tienda (solo admin)
+router.delete('/:id', isAdmin, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -107,8 +107,8 @@ router.delete('/:id', async (req, res) => {
 // INVENTARIO POR TIENDA
 // ========================================
 
-// Obtener alertas de stock bajo globales
-router.get('/inventario/bajo', async (req, res) => {
+// Obtener alertas de stock bajo globales (solo admin)
+router.get('/inventario/bajo', isAdmin, async (req, res) => {
     try {
         const [rows] = await db.query(`
             SELECT 
@@ -139,7 +139,7 @@ router.get('/:id/productos', checkTienda, async (req, res) => {
     try {
         const { id } = req.params;
         const [rows] = await db.query(`
-            SELECT 
+            SELECT
                 it.id as inventario_id,
                 it.cantidad,
                 it.stock_minimo,
@@ -154,7 +154,8 @@ router.get('/:id/productos', checkTienda, async (req, res) => {
                 p.codigo_barras,
                 p.imagenes,
                 p.oferta,
-                p.precio_oferta
+                p.precio_oferta,
+                p.impuestos
             FROM inventario_tienda it
             JOIN productos p ON it.producto_id = p.id
             WHERE it.tienda_id = ?
@@ -180,10 +181,17 @@ router.get('/:id/productos', checkTienda, async (req, res) => {
                 return acc;
             }, {});
 
+            const parseJson = (val, fallback = []) => {
+                if (!val) return fallback;
+                if (typeof val !== 'string') return Array.isArray(val) ? val : fallback;
+                try { return JSON.parse(val); } catch (e) { return fallback; }
+            };
+
             // Adjuntar a los productos
             const productsWithDetails = rows.map(p => ({
                 ...p,
-                id: p.producto_id, // Asegurar que tenga el ID del producto para el frontend
+                id: p.producto_id,
+                impuestos: parseJson(p.impuestos),
                 variaciones: variationsByProduct[p.producto_id] || [],
                 barcodes_agrupados: barcodesByProduct[p.producto_id] || []
             }));

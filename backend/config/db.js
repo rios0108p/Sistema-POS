@@ -25,7 +25,7 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    multipleStatements: true,
+    multipleStatements: false,
     timezone: '-05:00', // Actualizado para Cancún (UTC-5)
 });
 

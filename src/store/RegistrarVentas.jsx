@@ -1703,7 +1703,7 @@ const RegistrarVentas = () => {
                           { k: 'F12', n: 'COBRAR' }
                         ].map(s => (
                           <div key={s.k} className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-1.5 min-w-[75px] justify-center">
-                            <span className={`text-[9px] font-black ${s.k === 'F12' ? 'text-emerald-500' : 'text-amber-550'}`}>{s.k}</span>
+                            <span className={`text-[9px] font-black ${s.k === 'F12' ? 'text-emerald-500' : 'text-amber-500'}`}>{s.k}</span>
                             <span className="text-[7px] font-bold text-slate-500 uppercase">{s.n}</span>
                           </div>
                         ))}
@@ -2071,8 +2071,8 @@ const RegistrarVentas = () => {
                   disabled={v.stock <= 0}
                   className={`w-full flex justify-between p-3 rounded-lg border
                                         ${v.stock > 0
-                      ? 'hover:bg-blue-50 dark:hover:bg-blue-900/20 border-gray-200 dark:border-gray-700'
-                      : 'opacity-50 cursor-not-allowed bg-gray-100'}`}
+                      ? 'hover:bg-blue-50 dark:hover:bg-blue-900/20 border-slate-200 dark:border-slate-700'
+                      : 'opacity-50 cursor-not-allowed bg-slate-100'}`}
                 >
                   <span>{v.nombre}</span>
                   <div className="flex gap-4">
@@ -2082,7 +2082,7 @@ const RegistrarVentas = () => {
                 </button>
               ))}
             </div>
-            <button onClick={() => setProdSeleccionado(null)} className="mt-4 w-full py-2 text-gray-500 hover:bg-gray-100 rounded-lg">
+            <button onClick={() => setProdSeleccionado(null)} className="mt-4 w-full py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
               Cancelar
             </button>
           </div>
@@ -2410,7 +2410,7 @@ const RegistrarVentas = () => {
                   </div>
                   <button
                     onClick={handleAbrirTurno}
-                    disabled={!montoTurno}
+                    disabled={false}
                     className="btn-primary w-full py-6 text-xs uppercase tracking-[0.2em] gap-4"
                   >
                     <Play size={20} strokeWidth={3} /> ABRIR TURNO Y COMENZAR

@@ -108,18 +108,21 @@ const RegistrarCompras = () => {
     }
   };
 
-  // Carga inicial: productos de la tienda del usuario o todos si es admin sin tienda
+  // Carga inicial
   useEffect(() => {
-    const initialTiendaId = user?.rol === 'admin' ? null : user?.tienda_id;
-    cargarProductos(initialTiendaId);
+    if (user?.rol !== 'admin') cargarProductos(user?.tienda_id);
     cargarProveedores();
     cargarTiendas();
   }, []);
 
-  // Admin: re-cargar productos cuando cambia la tienda destino
+  // Admin: cargar productos solo cuando hay tienda seleccionada
   useEffect(() => {
     if (user?.rol === 'admin') {
-      cargarProductos(form.tienda_id || null);
+      if (form.tienda_id) {
+        cargarProductos(form.tienda_id);
+      } else {
+        setProductos([]);
+      }
     }
   }, [form.tienda_id]);
 
@@ -235,10 +238,13 @@ const RegistrarCompras = () => {
   };
 
   const productosFiltrados = productos
-    .filter(p =>
-      p.nombre.toLowerCase().includes(busquedaNombre.toLowerCase()) ||
-      (p.codigo_barras && p.codigo_barras.includes(busquedaNombre))
-    )
+    .filter(p => {
+      const q = busquedaNombre.toLowerCase();
+      if (p.nombre.toLowerCase().includes(q)) return true;
+      if (p.codigo_barras && p.codigo_barras.includes(busquedaNombre)) return true;
+      const extras = Array.isArray(p.barcodes_agrupados) ? p.barcodes_agrupados : [];
+      return extras.some(b => b && b.includes(busquedaNombre));
+    })
     .sort((a, b) => {
       const aHasStock = a.cantidad > 0;
       const bHasStock = b.cantidad > 0;
@@ -288,7 +294,18 @@ const RegistrarCompras = () => {
                 <input
                   ref={searchInputRef}
                   value={busquedaNombre}
-                  onChange={(e) => { setBusquedaNombre(e.target.value); setMostrarLista(true); }}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBusquedaNombre(val);
+                    setMostrarLista(true);
+                    // Auto-select on exact barcode match (scanner)
+                    const exacto = productos.find(p => {
+                      if (p.codigo_barras === val) return true;
+                      const extras = Array.isArray(p.barcodes_agrupados) ? p.barcodes_agrupados : [];
+                      return extras.includes(val);
+                    });
+                    if (exacto) handleSeleccionarProducto(exacto);
+                  }}
                   className="input-standard pl-12 h-[56px] font-black uppercase tracking-tight focus:ring-0 focus:outline-none"
                   placeholder="LOCALIZAR O ESCANEAR..."
                 />
@@ -412,7 +429,6 @@ const RegistrarCompras = () => {
                   className="select-standard h-[56px] font-bold border-indigo-200 dark:border-indigo-900/50 focus:ring-0 focus:outline-none"
                 >
                   <option value="">SELECCIONAR TIENDA...</option>
-                  <option value="0">ALMACÉN CENTRAL (GLOBAL)</option>
                   {listaTiendas.map(t => (
                     <option key={t.id} value={t.id}>{t.nombre}</option>
                   ))}

@@ -170,7 +170,6 @@ router.put('/:id', async (req, res) => {
         }
 
         const nuevoEstado = estado.toString().trim().toUpperCase();
-        console.log(`[PEDIDO] Recibida petición para actualizar #${pedidoId} a ${nuevoEstado}`);
 
         // Obtener estado actual SIN transacción
         const [pedido] = await db.query('SELECT estado, tienda_id FROM pedidos WHERE id = ?', [pedidoId]);
@@ -180,54 +179,44 @@ router.put('/:id', async (req, res) => {
 
         const estadoAnterior = pedido[0].estado ? pedido[0].estado.toString().trim().toUpperCase() : 'PENDIENTE';
         const tiendaId = pedido[0].tienda_id;
-        console.log(`[PEDIDO] Estado actual en BD: "${pedido[0].estado}" (normalizado: ${estadoAnterior})`);
 
         // --- BLOQUEO DE SEGURIDAD ---
         if (estadoAnterior === 'COMPRADO' || estadoAnterior === 'CANCELADO') {
-            console.log(`[BLOCKED] Pedido ${pedidoId} ya está ${estadoAnterior}`);
             return res.status(400).json({ error: `Este pedido ya está ${estadoAnterior} y no puede modificarse` });
         }
 
         // Actualizar estado DIRECTAMENTE sin transacción
-        console.log(`[PEDIDO] Ejecutando UPDATE: estado = "${nuevoEstado}" WHERE id = ${pedidoId}`);
-        const [updateResult] = await db.query('UPDATE pedidos SET estado = ? WHERE id = ?', [nuevoEstado, pedidoId]);
-        console.log(`[PEDIDO] Resultado UPDATE:`, JSON.stringify(updateResult));
-
-        // Verificar que el UPDATE funcionó
-        const [verificacion] = await db.query('SELECT estado FROM pedidos WHERE id = ?', [pedidoId]);
-        console.log(`[PEDIDO] Verificación después del UPDATE: estado = "${verificacion[0]?.estado}"`);
+        await db.query('UPDATE pedidos SET estado = ? WHERE id = ?', [nuevoEstado, pedidoId]);
 
         // Procesar inventario si es COMPRADO
+        let inventarioWarning = null;
         if (nuevoEstado === 'COMPRADO' && estadoAnterior !== 'COMPRADO' && tiendaId) {
-            console.log(`[INVENTARIO] 🔄 Procesando para tienda ${tiendaId}`);
             try {
                 const [detalles] = await db.query('SELECT producto_id, producto_nombre, cantidad, precio_unitario, subtotal FROM detalle_pedidos WHERE pedido_id = ?', [pedidoId]);
-                console.log(`[INVENTARIO] 📦 Encontrados ${detalles.length} items:`, JSON.stringify(detalles));
 
                 for (const item of detalles) {
-                    console.log(`[INVENTARIO] ➕ Agregando producto_id=${item.producto_id}, cantidad=${item.cantidad} a tienda ${tiendaId}`);
-
-                    const [invResult] = await db.query(`
+                    await db.query(`
                         INSERT INTO inventario_tienda (tienda_id, producto_id, cantidad, stock_minimo)
                         VALUES (?, ?, ?, 5)
                         ON DUPLICATE KEY UPDATE cantidad = cantidad + ?
                     `, [tiendaId, item.producto_id, item.cantidad, item.cantidad]);
-                    console.log(`[INVENTARIO] ✅ Inventario actualizado:`, JSON.stringify(invResult));
 
-                    const [compraResult] = await db.query(`
+                    await db.query(`
                         INSERT INTO compras (producto_id, producto_nombre, cantidad, precio_unitario, total, tienda_id, usuario_id, fecha)
                         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
                     `, [item.producto_id, item.producto_nombre, item.cantidad, item.precio_unitario, item.subtotal, tiendaId, usuario_id]);
-                    console.log(`[INVENTARIO] 💰 Compra registrada:`, JSON.stringify(compraResult));
                 }
-                console.log(`[INVENTARIO] ✅ Procesados ${detalles.length} items exitosamente`);
             } catch (invError) {
                 console.error(`[INVENTARIO ERROR] ❌ ${invError.message}`);
-                console.error(`[INVENTARIO ERROR] Stack:`, invError.stack);
+                inventarioWarning = `Inventario no actualizado: ${invError.message}`;
             }
         }
 
-        res.json({ message: 'Estado actualizado exitosamente', estado: nuevoEstado });
+        res.json({
+            message: 'Estado actualizado exitosamente',
+            estado: nuevoEstado,
+            ...(inventarioWarning && { warning: inventarioWarning })
+        });
     } catch (error) {
         console.error('[PEDIDO ERROR]', error);
         res.status(500).json({ error: 'Error al actualizar pedido' });

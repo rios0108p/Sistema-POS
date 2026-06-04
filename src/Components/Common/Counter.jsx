@@ -29,7 +29,7 @@ const Counter = ({ productId }) => {
       </button>
 
       {/* Mostrar cantidad actual */}
-      <p className="p-1">{cartItems[productId]}</p>
+      <p className="p-1">{cartItems[productId] ?? 0}</p>
 
       {/* Botón para sumar cantidad */}
       <button onClick={addToCartHandler} className="p-1 select-none">

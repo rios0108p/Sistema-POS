@@ -618,7 +618,7 @@ const StoreOrders = () => {
                       <span className="text-[7px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">TOTAL</span>
                       <div className="flex items-center justify-center gap-0.5">
                         <span className="text-[9px] font-black text-emerald-500/60">{currency}</span>
-                        <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">{parseFloat(p.total).toLocaleString()}</span>
+                        <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">{parseFloat(p.total || 0).toLocaleString()}</span>
                       </div>
                     </div>
                   </div>
@@ -847,7 +847,7 @@ const StoreOrders = () => {
                 <div className="p-6 rounded-3xl bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-2xl shadow-indigo-600/30 flex flex-col items-center border-4 border-white/10">
                   <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Total Estimado</span>
                   <div className="flex items-baseline gap-1.5"><span className="text-sm font-black opacity-70">{currency}</span><span className="text-4xl font-black tracking-tighter">
-                    {nuevaSolicitud.productos.reduce((sum, p) => sum + (p.cantidad * (Number(p.precio_unitario) || 0)), 0).toLocaleString()}
+                    {nuevaSolicitud.productos.reduce((sum, p) => sum + (p.cantidad * (Number(p.precio_unitario) || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span></div>
                   <button onClick={handleCrearSolicitud} disabled={procesandoIds.length > 0 || nuevaSolicitud.productos.length === 0 || !nuevaSolicitud.tienda_id}
                     className="mt-5 w-full h-12 bg-white text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-50 disabled:cursor-not-allowed active:scale-95">

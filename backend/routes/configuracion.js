@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import db from '../config/db.js';
+import { isAdmin } from '../middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,8 +80,8 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Actualizar configuración
-router.put('/', upload.fields([
+// Actualizar configuración (solo admin)
+router.put('/', isAdmin, upload.fields([
     { name: 'logo', maxCount: 1 },
     { name: 'card_bg_image', maxCount: 1 }
 ]), async (req, res) => {

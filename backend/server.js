@@ -1,11 +1,11 @@
 import express from 'express';
 import cors from 'cors';
-import compression from 'compression';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 // Importar middlewares de seguridad
 import { verifyToken, isAdmin } from './middleware/auth.js';
+import db from './config/db.js';
 
 // Importar rutas
 import productosRoutes from './routes/productos.js';
@@ -25,6 +25,7 @@ import movimientosRoutes from './routes/movimientos.js';
 import promocionesRoutes from './routes/promociones.js';
 import ajustesRoutes from './routes/ajustes.js';
 import gastosRoutes from './routes/gastos.js';
+import trasladosRoutes from './routes/traslados.js';
 
 
 // dotenv ya se cargó arriba
@@ -36,13 +37,12 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middlewares
-app.use(compression()); // Comprimir respuestas Gzip
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-    credentials: true,
-    optionsSuccessStatus: 200
+    optionsSuccessStatus: 200,
+    maxAge: 86400
 }));
 
 app.use((req, res, next) => {
@@ -68,13 +68,14 @@ app.use('/api/dashboard', verifyToken, dashboardRoutes);
 app.use('/api/proveedores', verifyToken, proveedoresRoutes);
 app.use('/api/clientes', verifyToken, clientesRoutes);
 app.use('/api/usuarios', verifyToken, isAdmin, usuariosRoutes);
-app.use('/api/configuracion', verifyToken, isAdmin, configuracionRoutes);
+app.use('/api/configuracion', verifyToken, configuracionRoutes);
 app.use('/api/turnos', verifyToken, turnosRoutes);
-app.use('/api/tiendas', verifyToken, isAdmin, tiendasRoutes);
+app.use('/api/tiendas', verifyToken, tiendasRoutes);
 app.use('/api/movimientos', verifyToken, movimientosRoutes);
 app.use('/api/promociones', verifyToken, promocionesRoutes);
 app.use('/api/ajustes', verifyToken, ajustesRoutes);
 app.use('/api/gastos', verifyToken, gastosRoutes);
+app.use('/api/traslados', verifyToken, trasladosRoutes);
 
 
 // Ruta de prueba básica
@@ -150,7 +151,10 @@ export function startServer(port = 3001) {
     }
 }
 
-// Iniciar automáticamente el servidor
-startServer(PORT);
+// Auto-iniciar en Node.js directo (VPS/producción). En Electron, se importa y no hay process.argv[1] apuntando aquí.
+const isElectron = process.versions && process.versions.electron;
+if (!isElectron) {
+    startServer(PORT);
+}
 
 export default app;

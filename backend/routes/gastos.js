@@ -18,9 +18,7 @@ migrate();
 // Registrar un gasto / movimiento
 router.post('/', async (req, res) => {
     try {
-        const userId = req.user.id;
-        const tiendaId = req.user.rol === 'admin' ? (req.body.tienda_id || null) : req.user.tienda_id;
-        const { categoria, monto, descripcion, fecha, tipo, turno_id } = req.body;
+        const { tienda_id, categoria, monto, descripcion, fecha, usuario_id, tipo, turno_id } = req.body;
 
         if (!monto || !categoria || !fecha) {
             return res.status(400).json({ error: 'Monto, categoría y fecha son obligatorios' });
@@ -28,7 +26,7 @@ router.post('/', async (req, res) => {
 
         const [result] = await db.query(
             'INSERT INTO gastos (tienda_id, categoria, monto, descripcion, fecha, usuario_id, tipo, turno_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [tiendaId, categoria, monto, descripcion || null, fecha, userId, tipo || 'SALIDA', turno_id || null]
+            [tienda_id || null, categoria, monto, descripcion || null, fecha, usuario_id || null, tipo || 'SALIDA', turno_id || null]
         );
 
         res.status(201).json({ message: 'Registro exitoso', id: result.insertId });

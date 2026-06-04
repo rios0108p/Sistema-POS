@@ -69,12 +69,13 @@ const ManageTiendas = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const payload = { ...formData, monto_base: parseFloat(formData.monto_base) || 0 };
         try {
             if (editingTienda) {
-                await tiendasAPI.update(editingTienda.id, formData);
+                await tiendasAPI.update(editingTienda.id, payload);
                 toast.success("Tienda actualizada");
             } else {
-                await tiendasAPI.create(formData);
+                await tiendasAPI.create(payload);
                 toast.success("Tienda creada");
             }
             setShowModal(false);
@@ -295,7 +296,7 @@ const ManageTiendas = () => {
                                 <div className="grid grid-cols-3 gap-2.5 mb-5 mt-auto">
                                     <div className="bg-indigo-50/60 dark:bg-indigo-900/20 p-3 rounded-2xl text-center border border-indigo-100/50 dark:border-indigo-800/20">
                                         <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Caja</p>
-                                        <p className="font-black text-indigo-600 dark:text-indigo-400 text-sm tracking-tighter">${Number(tienda.monto_base || 0).toLocaleString()}</p>
+                                        <p className="font-black text-indigo-600 dark:text-indigo-400 text-sm tracking-tighter">${Number(tienda.monto_base || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                                     </div>
                                     <div className="bg-emerald-50/60 dark:bg-emerald-900/20 p-3 rounded-2xl text-center border border-emerald-100/50 dark:border-emerald-800/20">
                                         <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Equipo</p>
@@ -350,103 +351,114 @@ const ManageTiendas = () => {
                             </div>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="p-7 space-y-5">
-                            <div>
-                                <label className="label-standard">Nombre Comercial *</label>
+                        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+
+                            {/* Nombre */}
+                            <div className="group">
+                                <label className="block text-[10px] font-black text-slate-400 tracking-[0.15em] uppercase mb-1.5">Nombre Comercial *</label>
                                 <input
                                     type="text"
                                     value={formData.nombre}
                                     onChange={e => setFormData({ ...formData, nombre: e.target.value })}
-                                    className="input-standard font-bold"
+                                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 focus:border-indigo-400 focus:bg-white dark:focus:bg-slate-700 rounded-2xl text-sm font-bold text-slate-700 dark:text-slate-200 outline-none transition-all placeholder:font-normal placeholder:text-slate-300"
                                     placeholder="Ej: Sucursal Norte"
                                     required
                                 />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
+                            {/* Tipo + Apertura */}
+                            <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="label-standard">Tipo de Tienda</label>
+                                    <label className="block text-[10px] font-black text-slate-400 tracking-[0.15em] uppercase mb-1.5">Tipo de Tienda</label>
                                     <select
                                         value={formData.tipo}
                                         onChange={e => setFormData({ ...formData, tipo: e.target.value })}
-                                        className="select-standard font-bold"
+                                        className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 focus:border-indigo-400 rounded-2xl text-sm font-bold text-slate-700 dark:text-slate-200 outline-none transition-all cursor-pointer"
                                     >
                                         {tipoOptions.map(t => <option key={t} value={t}>{t}</option>)}
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="label-standard">Apertura Caja</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        value={formData.monto_base}
-                                        onChange={e => setFormData({ ...formData, monto_base: parseFloat(e.target.value) || 0 })}
-                                        className="input-standard font-bold text-indigo-600 dark:text-indigo-400"
-                                    />
+                                    <label className="block text-[10px] font-black text-slate-400 tracking-[0.15em] uppercase mb-1.5">Fondo de Apertura</label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400 font-black text-sm">$</span>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={formData.monto_base}
+                                            onChange={e => setFormData({ ...formData, monto_base: e.target.value })}
+                                            className="w-full pl-7 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 focus:border-indigo-400 focus:bg-white dark:focus:bg-slate-700 rounded-2xl text-sm font-black text-indigo-600 dark:text-indigo-400 outline-none transition-all"
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
+                            {/* USD + Banco */}
+                            <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="label-standard">Tipo de Cambio USD</label>
+                                    <label className="block text-[10px] font-black text-slate-400 tracking-[0.15em] uppercase mb-1.5">Tipo de Cambio USD</label>
                                     <div className="relative">
-                                        <DollarSign size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <DollarSign size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-400" />
                                         <input
                                             type="number"
                                             step="0.01"
                                             value={formData.precio_dolar}
                                             onChange={e => setFormData({ ...formData, precio_dolar: parseFloat(e.target.value) || 0 })}
-                                            className="input-standard pl-10 font-bold text-amber-600 dark:text-amber-400"
+                                            className="w-full pl-7 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 focus:border-amber-400 focus:bg-white dark:focus:bg-slate-700 rounded-2xl text-sm font-black text-amber-600 dark:text-amber-400 outline-none transition-all"
                                         />
                                     </div>
                                 </div>
-                                <div className="col-span-1">
-                                    <label className="label-standard">Depósitos (Banco)</label>
+                                <div>
+                                    <label className="block text-[10px] font-black text-slate-400 tracking-[0.15em] uppercase mb-1.5">Datos Bancarios</label>
                                     <textarea
                                         value={formData.datos_bancarios}
                                         onChange={e => setFormData({ ...formData, datos_bancarios: e.target.value })}
-                                        className="input-standard text-[10px] font-bold"
+                                        className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 focus:border-indigo-400 focus:bg-white dark:focus:bg-slate-700 rounded-2xl text-xs font-bold text-slate-600 dark:text-slate-300 outline-none transition-all resize-none placeholder:font-normal placeholder:text-slate-300"
                                         placeholder="Cuenta, CLABE, Banco..."
                                         rows="2"
                                     />
                                 </div>
                             </div>
 
+                            {/* Dirección */}
                             <div>
-                                <label className="label-standard">Dirección Exacta</label>
+                                <label className="block text-[10px] font-black text-slate-400 tracking-[0.15em] uppercase mb-1.5">Dirección Exacta</label>
                                 <input
                                     type="text"
                                     value={formData.direccion}
                                     onChange={e => setFormData({ ...formData, direccion: e.target.value })}
-                                    className="input-standard font-bold"
+                                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 focus:border-indigo-400 focus:bg-white dark:focus:bg-slate-700 rounded-2xl text-sm font-bold text-slate-700 dark:text-slate-200 outline-none transition-all placeholder:font-normal placeholder:text-slate-300"
                                     placeholder="Av. Principal #123..."
                                 />
                             </div>
 
+                            {/* Teléfono */}
                             <div>
-                                <label className="label-standard">Línea de Contacto</label>
+                                <label className="block text-[10px] font-black text-slate-400 tracking-[0.15em] uppercase mb-1.5">Línea de Contacto</label>
                                 <input
                                     type="text"
                                     value={formData.telefono}
                                     onChange={e => setFormData({ ...formData, telefono: e.target.value })}
-                                    className="input-standard font-bold font-mono"
-                                    placeholder="+502 0000 0000"
+                                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 focus:border-indigo-400 focus:bg-white dark:focus:bg-slate-700 rounded-2xl text-sm font-bold font-mono text-slate-700 dark:text-slate-200 outline-none transition-all placeholder:font-normal placeholder:text-slate-300"
+                                    placeholder="+52 000 000 0000"
                                 />
                             </div>
 
-                            <div className="pt-4 flex gap-3">
+                            {/* Botones */}
+                            <div className="pt-2 flex gap-3">
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
-                                    className="flex-1 py-4 px-4 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-black text-sm uppercase tracking-widest rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-600 transition-all active:scale-95"
+                                    className="flex-1 py-3.5 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-600 transition-all active:scale-95"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
-                                    className="flex-[2] py-4 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-black text-sm uppercase tracking-widest rounded-2xl shadow-lg shadow-indigo-500/30 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+                                    className="flex-[2] py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
                                 >
-                                    <Save size={16} />
+                                    <Save size={15} />
                                     {editingTienda ? 'Confirmar Cambios' : 'Inicializar Sede'}
                                 </button>
                             </div>

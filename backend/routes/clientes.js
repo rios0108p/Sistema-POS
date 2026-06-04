@@ -70,6 +70,47 @@ router.get('/', async (req, res) => {
     }
 });
 
+// Bulk sync: obtener todos los abonos de clientes
+router.get('/todos-abonos', async (req, res) => {
+    try {
+        const { tienda_id } = req.query;
+        let query = 'SELECT ca.* FROM clientes_abonos ca';
+        const params = [];
+        if (tienda_id) {
+            query += ' JOIN clientes c ON ca.cliente_id = c.id WHERE c.tienda_id = ?';
+            params.push(tienda_id);
+        }
+        query += ' ORDER BY ca.fecha DESC LIMIT 1000';
+        const [rows] = await db.query(query, params);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error al obtener abonos:', error);
+        res.status(500).json({ error: 'Error al obtener abonos' });
+    }
+});
+
+// Bulk sync: obtener todos los precios especiales de clientes
+router.get('/todos-precios-especiales', async (req, res) => {
+    try {
+        const { tienda_id } = req.query;
+        let query = `
+            SELECT pec.id, pec.cliente_id, pec.producto_id, pec.precio_especial as precio
+            FROM precios_especiales_clientes pec
+        `;
+        const params = [];
+        if (tienda_id) {
+            query += ' JOIN clientes c ON pec.cliente_id = c.id WHERE c.tienda_id = ?';
+            params.push(tienda_id);
+        }
+        query += ' LIMIT 2000';
+        const [rows] = await db.query(query, params);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error al obtener precios especiales:', error);
+        res.status(500).json({ error: 'Error al obtener precios especiales' });
+    }
+});
+
 // Obtener cliente por ID
 router.get('/:id', async (req, res) => {
     try {
@@ -155,6 +196,18 @@ router.post('/:id/abonos', async (req, res) => {
         }
 
         await conn.beginTransaction();
+
+        // Verificar que el abono no supere la deuda actual (FOR UPDATE previene doble gasto concurrente)
+        const [clienteRows] = await conn.query('SELECT saldo_deudor FROM clientes WHERE id = ? FOR UPDATE', [id]);
+        if (clienteRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
+        const saldoActual = parseFloat(clienteRows[0].saldo_deudor || 0);
+        if (parseFloat(monto) > saldoActual) {
+            await conn.rollback();
+            return res.status(400).json({ error: `El abono ($${parseFloat(monto).toFixed(2)}) no puede superar la deuda actual ($${saldoActual.toFixed(2)})` });
+        }
 
         // 1. Registrar el abono
         await conn.query(

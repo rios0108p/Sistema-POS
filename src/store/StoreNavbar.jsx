@@ -205,13 +205,13 @@ const StoreNavbar = ({ onMenuToggle, sidebarOpen, isCollapsed }) => {
       <div className="flex items-center gap-2 sm:gap-6">
         {!window.electronAPI?.isDesktop && (
           <a
-            href="/downloads/TENDO-POS-Setup-1.1.15.exe"
-            download="TENDO-POS-Setup-1.1.15.exe"
+            href="/downloads/TENDO-POS-Setup-2.0.0.exe"
+            download="TENDO-POS-Setup-2.0.0.exe"
             className="hidden sm:flex items-center gap-2 pl-3 pr-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-indigo-500/25 group"
           >
             <Monitor size={15} className="group-hover:scale-110 transition-transform shrink-0" />
             <span>Descargar App</span>
-            <span className="bg-white/20 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md leading-none">v1.1.15</span>
+            <span className="bg-white/20 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md leading-none">v2.0.0</span>
           </a>
         )}
         <div className="flex items-center gap-2">

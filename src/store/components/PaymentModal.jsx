@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, DollarSign, CreditCard, Printer, RefreshCcw, Tag, Landmark, Zap, UserCheck, Layers, CheckCircle, AlertTriangle } from 'lucide-react';
+import { X, DollarSign, CreditCard, Printer, RefreshCcw, Landmark, Zap, UserCheck, Layers, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
-export default function PaymentModal({ isOpen, onClose, total, onConfirm, isWholesale = false, loading = false, selectedCustomer = null, cartItemsCount = 0 }) {
+export default function PaymentModal({ isOpen, onClose, total, onConfirm, loading = false, selectedCustomer = null, cartItemsCount = 0 }) {
     const { storeConfig } = useAuth();
 
     const [payments, setPayments] = useState([]);
@@ -206,7 +206,7 @@ export default function PaymentModal({ isOpen, onClose, total, onConfirm, isWhol
                                 { id: 'Dólar', icon: Landmark, label: 'Dólares' },
                                 { id: 'Tarjeta', icon: CreditCard, label: 'Tarjeta' },
                                 { id: 'Transferencia', icon: RefreshCcw, label: 'Transf.' },
-                                { id: 'Crédito', icon: UserCheck, label: 'A Crédito', hidden: !selectedCustomer },
+                                { id: 'Crédito', icon: UserCheck, label: 'A Crédito', hidden: !selectedCustomer || !selectedCustomer.credito_habilitado },
                                 { id: 'Mixto', icon: Layers, label: 'Mixto' }
                             ].filter(m => !m.hidden).map(method => {
                                 const isActive = currentMethod === method.id;
@@ -243,6 +243,7 @@ export default function PaymentModal({ isOpen, onClose, total, onConfirm, isWhol
                                                 <label className="text-[9px] font-black text-slate-400 mb-1 uppercase tracking-widest block opacity-80">{m.label}</label>
                                                 <input
                                                     type="number"
+                                                    inputMode="decimal"
                                                     value={mixedAmounts[m.id]}
                                                     onChange={e => setMixedAmounts({ ...mixedAmounts, [m.id]: e.target.value })}
                                                     className="w-full bg-transparent border-none text-3xl font-black text-slate-800 dark:text-white outline-none"
@@ -283,6 +284,7 @@ export default function PaymentModal({ isOpen, onClose, total, onConfirm, isWhol
                                             </label>
                                             <input
                                                 type="number"
+                                                inputMode="decimal"
                                                 value={amount}
                                                 onChange={e => setAmount(e.target.value)}
                                                 className="w-full bg-transparent border-none text-5xl font-black text-slate-800 dark:text-white text-center outline-none tracking-tighter"
@@ -441,7 +443,3 @@ export default function PaymentModal({ isOpen, onClose, total, onConfirm, isWhol
     );
 }
 
-const parseNum = (val) => {
-    const n = parseFloat(val);
-    return isNaN(n) ? 0 : n;
-};

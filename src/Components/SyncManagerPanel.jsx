@@ -53,7 +53,7 @@ const SyncManagerPanel = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white dark:bg-slate-900 shadow-2xl rounded-3xl w-full max-w-md overflow-hidden relative animate-in zoom-in-95 duration-200 border border-slate-100 dark:border-slate-800">
         
         {/* Header */}

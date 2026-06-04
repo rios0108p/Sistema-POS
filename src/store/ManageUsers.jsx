@@ -71,7 +71,7 @@ export default function ManageUsers() {
     const fetchUsuarios = async () => {
         try {
             const data = await usuariosAPI.getAll();
-            setUsuarios(data);
+            setUsuarios(Array.isArray(data) ? data : []);
         } catch (error) {
             toast.error("Error al cargar usuarios");
         } finally {

@@ -713,7 +713,7 @@ export default function StoreSettings() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="btn-primary w-full h-[64px] bg-indigo-600 hover:bg-indigo-700 border-none shadow-indigo-500/20 py-5 text-sm tracking-[0.2em]"
+                            className="btn-primary w-full h-[64px] bg-indigo-600 hover:bg-indigo-700 disabled:pointer-events-none border-none shadow-indigo-500/20 py-5 text-sm tracking-[0.2em]"
                         >
                             {loading ? (
                                 <RefreshCw size={24} className="animate-spin" />

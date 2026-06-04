@@ -272,7 +272,7 @@ export default function ManageTraslados() {
                                                 <div className="flex flex-col">
                                                     <span className="font-black text-slate-800 dark:text-white text-base uppercase tracking-tighter group-hover:text-indigo-600 transition-colors">#{t.id.toString().padStart(4, '0')}</span>
                                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1 flex items-center gap-1.5 opacity-60">
-                                                        <Calendar size={10} /> {new Date(t.fecha_envio).toLocaleDateString()}
+                                                        <Calendar size={10} /> {t.fecha_envio ? new Date(t.fecha_envio).toLocaleDateString() : '—'}
                                                     </span>
                                                 </div>
                                             </td>
@@ -497,7 +497,7 @@ export default function ManageTraslados() {
                                         TRASLADO #{detalleModal.traslado.id}
                                     </h2>
                                     <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mt-2 flex items-center gap-2">
-                                        <Calendar size={12} /> {new Date(detalleModal.traslado.fecha_envio).toLocaleString()}
+                                        <Calendar size={12} /> {detalleModal.traslado.fecha_envio ? new Date(detalleModal.traslado.fecha_envio).toLocaleString() : '—'}
                                     </p>
                                 </div>
                                 <button
@@ -531,7 +531,7 @@ export default function ManageTraslados() {
                                                 </div>
                                                 <div className="text-right shrink-0">
                                                     <div className="badge-standard bg-indigo-600 text-white border-none px-6 py-2 text-lg font-black tracking-tighter">
-                                                        {p.cantidad}
+                                                        {p.cantidad ?? 0}
                                                     </div>
                                                 </div>
                                             </div>

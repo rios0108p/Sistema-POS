@@ -208,9 +208,16 @@ const Inventario = () => {
 
 
   const productosFiltrados = useMemo(() => {
-    let base = productos.filter((p) =>
-      p.nombre.toLowerCase().includes(busqueda.toLowerCase())
-    );
+    let base = productos.filter((p) => {
+      const q = busqueda.toLowerCase();
+      if (!q) return true;
+      if (p.nombre.toLowerCase().includes(q)) return true;
+      if (p.codigo_barras && p.codigo_barras.includes(busqueda)) return true;
+      const extras = Array.isArray(p.barcodes_agrupados) ? p.barcodes_agrupados : [];
+      return extras.some(b => b && b.includes(busqueda));
+    });
+
+    if (categoriaFiltro) base = base.filter(p => p.categoria === categoriaFiltro);
 
     if (urlFilter === 'bajoStock') {
       base = base.filter(p => p.stockReal <= (p.stock_minimo || 5));
@@ -219,7 +226,7 @@ const Inventario = () => {
     }
 
     return base;
-  }, [productos, busqueda, urlFilter]);
+  }, [productos, busqueda, urlFilter, categoriaFiltro]);
 
   /* Removed toggleExpandir in favor of Modal */
 
@@ -412,25 +419,36 @@ const Inventario = () => {
       </div>
 
       {/* Main Content Area */}
-      <div className="mb-8">
-        <div className="relative">
+      <div className="mb-8 flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
           <div className="flex justify-between items-center mb-2 px-1">
-            <label className="label-standard">Filtrar por nombre</label>
+            <label className="label-standard">Buscar por nombre o código</label>
             <span className="text-[9px] font-bold text-slate-300 uppercase tracking-widest bg-slate-50 dark:bg-slate-900 px-2 py-0.5 rounded border dark:border-slate-700 opacity-50">F2</span>
           </div>
           <div className="relative group">
             <Search className="absolute left-3 top-3.5 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size={18} />
             <input
               ref={searchInputRef}
-              placeholder="Buscar en esta sucursal..."
+              placeholder="Nombre, código de barras..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               className="input-standard pl-10"
             />
           </div>
         </div>
-
-
+        <div className="sm:w-56">
+          <div className="mb-2 px-1">
+            <label className="label-standard">Categoría</label>
+          </div>
+          <select
+            value={categoriaFiltro}
+            onChange={(e) => setCategoriaFiltro(e.target.value)}
+            className="input-standard font-bold text-sm cursor-pointer"
+          >
+            <option value="">Todas las categorías</option>
+            {stats.categorias.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+          </select>
+        </div>
       </div>
 
       {viewMode === 'table' ? (

@@ -70,6 +70,29 @@ router.get('/proximo-folio', async (req, res) => {
     }
 });
 
+// Bulk sync: obtener todos los pagos de ventas (para sincronización offline)
+router.get('/pagos', async (req, res) => {
+    try {
+        const { tienda_id, desde } = req.query;
+        let query = `
+            SELECT vp.id, vp.venta_id, vp.metodo, vp.monto, vp.referencia, v.tienda_id
+            FROM ventas_pagos vp
+            JOIN ventas v ON vp.venta_id = v.id
+            WHERE 1=1
+        `;
+        const params = [];
+        if (tienda_id) { query += ' AND v.tienda_id = ?'; params.push(tienda_id); }
+        if (desde) { query += ' AND v.fecha >= ?'; params.push(desde); }
+        else { query += " AND v.fecha >= DATE_SUB(NOW(), INTERVAL 30 DAY)"; }
+        query += ' ORDER BY v.fecha DESC LIMIT 2000';
+        const [rows] = await db.query(query, params);
+        res.json(rows);
+    } catch (error) {
+        console.error('Error al obtener pagos:', error);
+        res.status(500).json({ error: 'Error al obtener pagos' });
+    }
+});
+
 // Obtener detalle de una venta
 router.get('/:id', async (req, res) => {
     try {
@@ -115,48 +138,74 @@ router.get('/:id', async (req, res) => {
 
 // Registrar nueva venta o cotización
 router.post('/', async (req, res) => {
+    const {
+        cliente_id,
+        productos,
+        tipo = 'VENTA',
+        descuento_global = 0,
+        pagos = [],
+        notas = ''
+        // Ignoramos desglose_impuestos y total_impuestos del body por seguridad (SEC-007)
+    } = req.body;
+
+    const userId = req.body.usuario_id || null;
+    const tiendaId = req.body.tienda_id || null;
+    const isOfflineSync = req.body.offline_sync === true;
+    let turnoId = req.body.turno_id;
+
+    if (!turnoId && tipo === 'VENTA' && !isOfflineSync) {
+        return res.status(400).json({ error: 'Se requiere un turno activo para registrar una venta' });
+    }
+
     const connection = await db.getConnection();
 
     try {
         await connection.beginTransaction();
 
-        const {
-            cliente_id,
-            productos,
-            tipo = 'VENTA', // VENTA, COTIZACION
-            descuento_global = 0,
-            pagos = [], // Array de { metodo, monto, referencia }
-            notas = ''
-            // Ignoramos desglose_impuestos y total_impuestos del body por seguridad (SEC-007)
-        } = req.body;
-
-        const userId = req.body.usuario_id || null;
-        const tiendaId = req.body.tienda_id || null;
-        const turnoId = req.body.turno_id;
-
-        if (!turnoId && tipo === 'VENTA') {
-            throw new Error('Se requiere un turno activo para registrar una venta');
-        }
-
-        // Si es VENTA, validar que el turno esté ABIERTO
-        if (tipo === 'VENTA') {
+        // Validar turno para ventas normales; para offline_sync ser permisivo
+        if (tipo === 'VENTA' && turnoId) {
             const [turnoCheck] = await connection.query(
-                'SELECT estado FROM turnos WHERE id = ?',
+                'SELECT id, estado FROM turnos WHERE id = ?',
                 [turnoId]
             );
-            if (turnoCheck.length === 0 || turnoCheck[0].estado !== 'ABIERTO') {
-                throw new Error('El turno se encuentra cerrado o no es válido. No se puede realizar la venta.');
+            if (!isOfflineSync) {
+                if (turnoCheck.length === 0 || turnoCheck[0].estado !== 'ABIERTO') {
+                    throw Object.assign(new Error('El turno se encuentra cerrado o no es válido. No se puede realizar la venta.'), { status: 400 });
+                }
+            } else if (turnoCheck.length === 0) {
+                // Offline sync: turno no existe → usar el último turno de la tienda
+                const [lastTurno] = await connection.query(
+                    `SELECT id FROM turnos WHERE tienda_id = ? ORDER BY fecha_apertura DESC LIMIT 1`,
+                    [tiendaId]
+                );
+                if (lastTurno.length > 0) {
+                    turnoId = lastTurno[0].id;
+                } else {
+                    throw Object.assign(new Error('No se encontró ningún turno para esta tienda'), { status: 400 });
+                }
+            }
+            // Si turno existe pero está CERRADO en modo offline_sync → lo aceptamos
+        } else if (tipo === 'VENTA' && !turnoId && isOfflineSync && tiendaId) {
+            // Sin turno_id pero con offline_sync → buscar último turno de la tienda
+            const [lastTurno] = await connection.query(
+                `SELECT id FROM turnos WHERE tienda_id = ? ORDER BY fecha_apertura DESC LIMIT 1`,
+                [tiendaId]
+            );
+            if (lastTurno.length > 0) {
+                turnoId = lastTurno[0].id;
+            } else {
+                throw new Error('No se encontró ningún turno para esta tienda');
             }
         }
 
         const [lastTicket] = await connection.query(
             'SELECT MAX(ticket_numero) as max_ticket FROM ventas WHERE turno_id = ?',
-            [turnoId]
+            [turnoId || 0]
         );
         const nextTicketNo = (lastTicket[0].max_ticket || 0) + 1;
 
         if (!productos || !Array.isArray(productos) || productos.length === 0) {
-            throw new Error('No hay productos en la transacción');
+            throw Object.assign(new Error('No hay productos en la transacción'), { status: 400 });
         }
 
         let totalBruto = 0;
@@ -217,7 +266,7 @@ router.post('/', async (req, res) => {
             // Validar Stock solo si es VENTA
             if (tipo === 'VENTA') {
                 if (stockDisponible < item.cantidad) {
-                    throw new Error(`Stock insuficiente para "${nombreProducto}". Disponible: ${stockDisponible}, Solicitado: ${item.cantidad}`);
+                    throw Object.assign(new Error(`Stock insuficiente para "${nombreProducto}". Disponible: ${stockDisponible}, Solicitado: ${item.cantidad}`), { status: 400 });
                 }
             }
 
@@ -226,7 +275,8 @@ router.post('/', async (req, res) => {
             let impuestosItemTotal = 0;
             const itemImpuestosDetalle = [];
 
-            if (impuestosDB) {
+            // Combo items use precio_combo as the final price — skip individual tax recalculation
+            if (!item.promocion_id && impuestosDB) {
                 try {
                     const impList = typeof impuestosDB === 'string' ? JSON.parse(impuestosDB) : impuestosDB;
                     if (Array.isArray(impList)) {
@@ -272,11 +322,14 @@ router.post('/', async (req, res) => {
             if (tipo === 'VENTA') {
                 if (tiendaId) {
                     const [exists] = await connection.query(
-                        'SELECT id FROM inventario_tienda WHERE tienda_id = ? AND producto_id = ?',
+                        'SELECT id, cantidad FROM inventario_tienda WHERE tienda_id = ? AND producto_id = ?',
                         [tiendaId, item.id]
                     );
 
                     if (exists.length > 0) {
+                        if (Number(exists[0].cantidad) < item.cantidad) {
+                            console.warn(`[STOCK] ⚠️ Venta con stock insuficiente: producto ${item.id}, disponible ${exists[0].cantidad}, solicitado ${item.cantidad}`);
+                        }
                         await connection.query(
                             'UPDATE inventario_tienda SET cantidad = GREATEST(0, CAST(cantidad AS SIGNED) - ?), activo = 1 WHERE id = ?',
                             [item.cantidad, exists[0].id]
@@ -303,7 +356,8 @@ router.post('/', async (req, res) => {
             }
         }
 
-        const totalNeto = totalBruto - (parseFloat(descuento_global) || 0) + parseFloat(totalImpuestosCalculados || 0);
+        // Los precios ya incluyen impuestos (tax-inclusive). totalImpuestosCalculados es solo informativo.
+        const totalNeto = totalBruto - (parseFloat(descuento_global) || 0);
         const estadoInicial = tipo === 'COTIZACION' ? 'PENDIENTE' : 'COMPLETADA';
         const resumenStr = resumenProdNames.join(', ') + (productos.length > 3 ? '...' : '');
 
@@ -364,15 +418,15 @@ router.post('/', async (req, res) => {
         }
 
         if (totalCredito > 0) {
-            if (!cliente_id) throw new Error('Se requiere seleccionar un cliente para ventas a crédito');
+            if (!cliente_id) throw Object.assign(new Error('Se requiere seleccionar un cliente para ventas a crédito'), { status: 400 });
             const [clienteRows] = await connection.query('SELECT * FROM clientes WHERE id = ?', [cliente_id]);
-            if (clienteRows.length === 0) throw new Error('Cliente no encontrado');
+            if (clienteRows.length === 0) throw Object.assign(new Error('Cliente no encontrado'), { status: 404 });
             const cli = clienteRows[0];
-            if (!cli.credito_habilitado) throw new Error('El cliente no tiene habilitado el crédito por la administración');
+            if (!cli.credito_habilitado) throw Object.assign(new Error('El cliente no tiene habilitado el crédito por la administración'), { status: 400 });
 
             const nuevoSaldo = parseFloat(cli.saldo_deudor || 0) + totalCredito;
             if (nuevoSaldo > parseFloat(cli.limite_credito || 0)) {
-                throw new Error(`Límite de crédito excedido. Disponible: $${(cli.limite_credito - cli.saldo_deudor).toFixed(2)}, Intento de cargo: $${totalCredito.toFixed(2)}`);
+                throw Object.assign(new Error(`Límite de crédito excedido. Disponible: $${(cli.limite_credito - cli.saldo_deudor).toFixed(2)}, Intento de cargo: $${totalCredito.toFixed(2)}`), { status: 422 });
             }
             await connection.query('UPDATE clientes SET saldo_deudor = ? WHERE id = ?', [nuevoSaldo, cliente_id]);
         }
@@ -410,7 +464,7 @@ router.post('/', async (req, res) => {
             } catch (err2) { console.error('Error migrando detalle_ventas (costo_unitario):', err2); }
         }
 
-        res.status(500).json({ error: error.message });
+        res.status(error.status || 500).json({ error: error.message });
     } finally {
         connection.release();
     }

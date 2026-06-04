@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import Loading from "../Components/Common/Loading";
-import { productosAPI, getImageUrl, tiendasAPI } from "../services/api";
+import { productosAPI, tiendasAPI } from "../services/api";
 import PinValidationModal from "./components/PinValidationModal";
 import BarcodeTagGenerator from "./components/BarcodeTagGenerator";
 import { useAuth } from "../context/AuthContext";
 import useOfflineOperation from "../hooks/useOfflineOperation";
-import { Pencil, Trash2, Save, X, RefreshCw, Package, Barcode, DollarSign, Tag, Layers, Search, Store, Download, Upload, FileText, ChevronRight, LayoutDashboard, List, TrendingUp, TrendingDown, PieChart as PieChartIcon, ArrowRight, AlertTriangle } from "lucide-react";
+import { Pencil, Trash2, Save, X, RefreshCw, Package, Barcode, DollarSign, Tag, Layers, Search, Store, Download, Upload, FileText, LayoutDashboard, List, TrendingUp, TrendingDown, PieChart as PieChartIcon, ArrowRight, AlertTriangle } from "lucide-react";
 import { CURRENCY_SYMBOL } from "../utils/currency";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
@@ -506,10 +506,13 @@ const StoreManageProducts = () => {
     obtenerProductos();
   }, [tiendaSeleccionada]);
 
-  const filteredProducts = productos.filter(p =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.barcode && p.barcode.includes(searchTerm))
-  );
+  const filteredProducts = productos.filter(p => {
+    const q = searchTerm.toLowerCase();
+    if (p.name.toLowerCase().includes(q)) return true;
+    if (p.barcode && p.barcode.includes(searchTerm)) return true;
+    const extras = Array.isArray(p.barcodesAgrupados) ? p.barcodesAgrupados : [];
+    return extras.some(b => b && b.includes(searchTerm));
+  });
 
   if (cargando && productos.length === 0) return <Loading />;
 
@@ -642,7 +645,7 @@ const StoreManageProducts = () => {
                 <TrendingUp size={10} /> Inversión Total
               </div>
               <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 leading-none tracking-tighter">
-                {moneda}{totalInversion.toLocaleString()}
+                {moneda}{totalInversion.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
             <div className="hidden sm:flex card-standard p-5 flex-col justify-center items-center h-[100px] bg-indigo-50/30 dark:bg-indigo-900/10 border-indigo-100 dark:border-indigo-900/30">
@@ -650,7 +653,7 @@ const StoreManageProducts = () => {
                 <DollarSign size={10} /> Utilidad Bruta
               </div>
               <p className="text-2xl font-black text-indigo-600 dark:text-indigo-400 leading-none tracking-tighter">
-                {moneda}{totalGananciaEstimada.toLocaleString()}
+                {moneda}{totalGananciaEstimada.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
           </div>
@@ -727,7 +730,7 @@ const StoreManageProducts = () => {
                                   </div>
                                   <div className="flex flex-wrap gap-2">
                                     {formularioEdicion.barcodes_agrupados.map((b, idx) => (
-                                      <span key={idx} className="badge-standard bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400 py-1 px-2 border-none font-mono">
+                                      <span key={b} className="badge-standard bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400 py-1 px-2 border-none font-mono">
                                         {b}
                                         <button type="button" onClick={() => setFormularioEdicion({ ...formularioEdicion, barcodes_agrupados: formularioEdicion.barcodes_agrupados.filter((_, i) => i !== idx) })} className="hover:text-rose-500 ml-1">×</button>
                                       </span>
@@ -767,7 +770,7 @@ const StoreManageProducts = () => {
                                   <label className="label-standard px-1">Margen Actual</label>
                                   <div className="p-5 bg-slate-50 dark:bg-slate-900 rounded-2xl border dark:border-slate-700/50 text-center flex flex-col justify-center h-[90px]">
                                     <p className="text-2xl font-black text-indigo-500 leading-none">
-                                      +{formularioEdicion.precio_venta > 0 ? (((formularioEdicion.precio_venta - formularioEdicion.precio_compra) / formularioEdicion.precio_compra) * 100).toFixed(1) : 0}%
+                                      +{(formularioEdicion.precio_compra > 0 && formularioEdicion.precio_venta > 0) ? (((formularioEdicion.precio_venta - formularioEdicion.precio_compra) / formularioEdicion.precio_compra) * 100).toFixed(1) : 0}%
                                     </p>
                                     <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1.5 opacity-80">Rendimiento sobre costo</p>
                                   </div>
@@ -828,7 +831,7 @@ const StoreManageProducts = () => {
                                   <div className="flex flex-wrap gap-2 mt-4 px-1">
                                     {formularioEdicion.impuestos.length === 0 && <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic opacity-70">Exento o No Configurado (Precio Venta es Neto)</span>}
                                     {formularioEdicion.impuestos.map((imp, idx) => (
-                                      <div key={idx} className="badge-standard bg-white dark:bg-slate-800 pr-2 py-1.5 border dark:border-slate-700 shadow-sm flex items-center gap-2">
+                                      <div key={imp.tipo || idx} className="badge-standard bg-white dark:bg-slate-800 pr-2 py-1.5 border dark:border-slate-700 shadow-sm flex items-center gap-2">
                                         <span className="font-black text-[9px] tracking-[0.2em] uppercase text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-md">{imp.tipo}</span>
                                         <span className="font-mono font-bold text-sm text-slate-700 dark:text-slate-200">{imp.porcentaje}%</span>
                                         <button type="button" onClick={() => setFormularioEdicion({ ...formularioEdicion, impuestos: formularioEdicion.impuestos.filter((_, i) => i !== idx) })} className="hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/40 p-1 rounded-md text-slate-300 transition-colors"><X size={14} /></button>
@@ -849,7 +852,7 @@ const StoreManageProducts = () => {
                                 <div className="flex items-center gap-4">
                                   <div className="w-14 h-14 bg-slate-50 dark:bg-slate-900 border dark:border-slate-700/50 rounded-2xl flex items-center justify-center text-slate-300 group-hover:text-indigo-500 transition-colors shadow-inner overflow-hidden">
                                     {producto?.images?.[0] ? (
-                                      <img src={producto.images[0]} className="w-full h-full object-cover" alt={producto.name} />
+                                      <img src={producto.images[0]} className="w-full h-full object-cover" alt={producto.name} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                                     ) : (
                                       <Package size={28} />
                                     )}
@@ -922,6 +925,7 @@ const StoreManageProducts = () => {
                                     onClick={() => setTagModal({ open: true, product: producto })}
                                     className="p-3.5 text-slate-400 hover:text-emerald-500 hover:bg-white dark:hover:bg-slate-800 rounded-2xl transition-all shadow-md active:scale-90 border border-transparent hover:border-emerald-100 dark:hover:border-emerald-900/30"
                                     title="Generar Viñeta"
+                                    aria-label="Generar Viñeta"
                                   >
                                     <Barcode size={20} />
                                   </button>
@@ -929,6 +933,7 @@ const StoreManageProducts = () => {
                                     onClick={() => iniciarEdicion(producto)}
                                     className="p-3.5 text-slate-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-slate-800 rounded-2xl transition-all shadow-md active:scale-90 border border-transparent hover:border-indigo-100 dark:hover:border-indigo-900/30"
                                     title="Editar Master Data"
+                                    aria-label="Editar Master Data"
                                   >
                                     <Pencil size={20} />
                                   </button>
@@ -936,6 +941,7 @@ const StoreManageProducts = () => {
                                     onClick={() => eliminarProducto(producto.id)}
                                     className="p-3.5 text-slate-400 hover:text-rose-600 hover:bg-white dark:hover:bg-slate-800 rounded-2xl transition-all shadow-md active:scale-90 border border-transparent hover:border-rose-100 dark:hover:border-rose-900/30"
                                     title="Baja de Catálogo"
+                                    aria-label="Baja de Catálogo"
                                   >
                                     <Trash2 size={20} />
                                   </button>
@@ -1010,7 +1016,7 @@ const StoreManageProducts = () => {
                           paddingAngle={8}
                           dataKey="value"
                         >
-                          {[0, 1, 2, 3, 4].map((entry, index) => (
+                          {[0, 1, 2, 3, 4].map((_, index) => (
                             <Cell key={`cell-${index}`} fill={['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />
                           ))}
                         </Pie>
@@ -1049,7 +1055,6 @@ const StoreManageProducts = () => {
                         const compra = parseFloat(p.datosOriginales.precio_compra || 0);
                         const venta = parseFloat(p.datosOriginales.precio_venta || 0);
                         const inversion = compra * p.cantidad;
-                        const ganancia = (venta - compra) * p.cantidad;
                         const margenPercent = compra > 0 ? ((venta - compra) / compra) * 100 : 0;
 
                         return (

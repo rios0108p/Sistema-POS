@@ -64,6 +64,10 @@ router.put('/:id', async (req, res) => {
         const { id } = req.params;
         const { nombre_usuario, password, rol, tienda_id, turno_trabajo, pin_seguridad, permisos } = req.body;
 
+        if (!nombre_usuario || !nombre_usuario.trim()) {
+            return res.status(400).json({ error: 'El nombre de usuario es obligatorio' });
+        }
+
         const updates = [];
         const params = [];
 

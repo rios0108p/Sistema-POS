@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import {
   CircleDollarSignIcon,
@@ -19,10 +19,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Trophy,
-  Crown,
   Clock,
   Zap,
-  Download,
   Table,
   Store,
   Ticket
@@ -56,7 +54,9 @@ export default function Dashboard() {
   const [dashboardData, setDashboardData] = useState({
     totalProducts: 0,
     totalRevenue: 0,
+    totalExpenses: 0,
     totalProfit: 0,
+    totalGrossProfit: 0,
     totalCost: 0,
     totalOrders: 0,
     averagePrice: 0,
@@ -162,10 +162,10 @@ export default function Dashboard() {
 
   const cards = [
     { title: "Total Productos", value: dashboardData.totalProducts, icon: ShoppingBasketIcon, visible: true, trend: null, color: "text-slate-600" },
-    { title: "Ingresos Totales", value: `${currency}${dashboardData.totalRevenue.toFixed(2)}`, icon: CircleDollarSignIcon, visible: true, trend: dashboardData.tendencias.ingresos, color: "text-emerald-600" },
-    { title: "Gastos Operativos", value: `${currency}${dashboardData.totalExpenses.toFixed(2)}`, icon: TrendingDownIcon, visible: true, trend: dashboardData.tendencias.gastos, color: "text-rose-500" },
-    { title: "Utilidad Neta", value: `${currency}${dashboardData.totalProfit.toFixed(2)}`, icon: TrendingUpIcon, visible: true, trend: dashboardData.tendencias.ganancia, color: "text-indigo-600" },
-    { title: "Ganancia Bruta", value: `${currency}${dashboardData.totalGrossProfit.toFixed(2)}`, icon: TagsIcon, visible: true, trend: null, color: "text-blue-600" },
+    { title: "Ingresos Totales", value: `${currency}${(dashboardData.totalRevenue || 0).toFixed(2)}`, icon: CircleDollarSignIcon, visible: true, trend: isNaN(dashboardData.tendencias.ingresos) ? 0 : dashboardData.tendencias.ingresos, color: "text-emerald-600" },
+    { title: "Gastos Operativos", value: `${currency}${(dashboardData.totalExpenses || 0).toFixed(2)}`, icon: TrendingDownIcon, visible: true, trend: isNaN(dashboardData.tendencias.gastos) ? 0 : (dashboardData.tendencias.gastos || 0), color: "text-rose-500" },
+    { title: "Utilidad Neta", value: `${currency}${(dashboardData.totalProfit || 0).toFixed(2)}`, icon: TrendingUpIcon, visible: true, trend: isNaN(dashboardData.tendencias.ganancia) ? 0 : dashboardData.tendencias.ganancia, color: "text-indigo-600" },
+    { title: "Ganancia Bruta", value: `${currency}${(dashboardData.totalGrossProfit || 0).toFixed(2)}`, icon: TagsIcon, visible: true, trend: null, color: "text-blue-600" },
     { title: "Ventas Realizadas", value: dashboardData.totalOrders, icon: ShoppingCart, visible: true, trend: dashboardData.tendencias.ventas, color: "text-orange-500" },
     { title: "Bajo Stock", value: dashboardData.outOfStock, icon: PackageIcon, visible: true, trend: null, color: dashboardData.outOfStock > 0 ? "text-red-600" : "text-emerald-600", path: "/store/inventarios?filter=bajoStock" },
   ];
@@ -305,7 +305,7 @@ export default function Dashboard() {
                 {c.trend !== null && (
                   <div className={`flex items-center gap-1 mt-2 text-xs font-bold ${c.trend >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                     {c.trend >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                    <span>{Math.abs(c.trend)}%</span>
+                    <span>{Math.abs(isNaN(c.trend) ? 0 : c.trend)}%</span>
                   </div>
                 )}
               </div>
@@ -329,14 +329,14 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-5 relative z-10">
                 {dashboardData.mejorProducto.imagenes?.length > 0 ? (
-                  <img src={getImageUrl(dashboardData.mejorProducto.imagenes[0])} alt="" className="w-20 h-20 rounded-2xl object-cover border-2 border-white/20 shadow-md" />
+                  <img src={getImageUrl(dashboardData.mejorProducto.imagenes[0])} alt={dashboardData.mejorProducto.nombre} className="w-20 h-20 rounded-2xl object-cover border-2 border-white/20 shadow-md" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 ) : (
                   <div className="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center"><PackageIcon size={32} /></div>
                 )}
                 <div>
                   <p className="text-xl font-bold leading-tight">{dashboardData.mejorProducto.nombre}</p>
                   <p className="text-sm font-medium opacity-80 mt-1">{dashboardData.mejorProducto.unidades} unidades vendidas</p>
-                  <p className="text-2xl font-bold mt-1 leading-none">{currency}{parseFloat(dashboardData.mejorProducto.total).toFixed(2)}</p>
+                  <p className="text-2xl font-bold mt-1 leading-none">{currency}{parseFloat(dashboardData.mejorProducto.total || 0).toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -353,7 +353,7 @@ export default function Dashboard() {
                 <div className="flex items-end justify-between mt-2">
                   <div>
                     <p className="text-sm font-medium opacity-80">{dashboardData.mejorTienda.ventas} ventas completadas</p>
-                    <p className="text-2xl font-bold">{currency}{parseFloat(dashboardData.mejorTienda.total).toFixed(2)}</p>
+                    <p className="text-2xl font-bold">{currency}{parseFloat(dashboardData.mejorTienda.total || 0).toFixed(2)}</p>
                   </div>
                   <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-tighter">Ranking #1</div>
                 </div>
@@ -368,7 +368,7 @@ export default function Dashboard() {
         <div className="card-standard p-8">
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-lg font-bold text-slate-800 dark:text-white uppercase tracking-tight">Tendencia de Ingresos</h2>
-            <TrendingUpIcon size={20} className="text-slate-200" />
+            <TrendingUpIcon size={20} className="text-slate-400 dark:text-slate-600" />
           </div>
           <div className="h-[280px] w-full">
             {dashboardData.tendenciaVentas?.length > 0 ? (
@@ -437,7 +437,7 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between mb-1">
                     <p className="text-sm font-bold text-slate-800 dark:text-white truncate uppercase tracking-tighter">{item.descripcion}</p>
                     <span className={`text-sm font-bold ${item.tipo === 'venta' ? 'text-emerald-600' : 'text-orange-600'}`}>
-                      {item.tipo === 'venta' ? '+' : '-'}{currency}{parseFloat(item.monto).toFixed(2)}
+                      {item.tipo === 'venta' ? '+' : '-'}{currency}{parseFloat(item.monto || 0).toFixed(2)}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -460,7 +460,7 @@ export default function Dashboard() {
                 <div key={`${p.id}-${p.tienda_id}`} className="p-4 flex items-center justify-between bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl hover:border-red-200 dark:hover:border-red-900 shadow-sm hover:shadow-md transition-all group">
                   <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => navigate(`/store/add-product?id=${p.id}`)}>
                     <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center overflow-hidden border">
-                      {p.images?.length > 0 ? <img src={getImageUrl(p.images[0])} alt="" className="w-full h-full object-cover" /> : <PackageIcon size={20} className="text-slate-300" />}
+                      {p.images?.length > 0 ? <img src={getImageUrl(p.images[0])} alt={p.nombre} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : <PackageIcon size={20} className="text-slate-300" />}
                     </div>
                     <div>
                       <p className="text-sm font-bold text-slate-800 dark:text-white leading-tight uppercase tracking-tighter">{p.nombre}</p>

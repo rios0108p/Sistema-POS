@@ -5,23 +5,23 @@ const router = express.Router();
 
 // Registrar un ajuste de inventario
 router.post('/', async (req, res) => {
+    const {
+        producto_id,
+        variacion_id,
+        tienda_id,
+        cantidad_nueva,
+        motivo,
+        notas,
+        usuario_id
+    } = req.body;
+
+    if (!producto_id) {
+        return res.status(400).json({ error: 'El producto_id es obligatorio' });
+    }
+
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
-
-        const {
-            producto_id,
-            variacion_id,
-            tienda_id,
-            cantidad_nueva,
-            motivo,
-            notas,
-            usuario_id
-        } = req.body;
-
-        if (!producto_id) {
-            throw new Error('El producto_id es obligatorio');
-        }
 
         // 1. Obtener cantidad actual
         let cantidad_anterior = 0;
@@ -33,17 +33,22 @@ router.post('/', async (req, res) => {
             if (rows.length > 0) {
                 cantidad_anterior = rows[0].cantidad;
             } else {
-                // Si no existe el registro en la tienda, lo creamos más adelante
                 cantidad_anterior = 0;
             }
         } else {
             if (variacion_id) {
                 const [rows] = await connection.query('SELECT stock FROM variaciones WHERE id = ?', [variacion_id]);
-                if (rows.length === 0) throw new Error('Variación no encontrada');
+                if (rows.length === 0) {
+                    await connection.rollback();
+                    return res.status(404).json({ error: 'Variación no encontrada' });
+                }
                 cantidad_anterior = rows[0].stock;
             } else {
                 const [rows] = await connection.query('SELECT cantidad FROM productos WHERE id = ?', [producto_id]);
-                if (rows.length === 0) throw new Error('Producto no encontrado');
+                if (rows.length === 0) {
+                    await connection.rollback();
+                    return res.status(404).json({ error: 'Producto no encontrado' });
+                }
                 cantidad_anterior = rows[0].cantidad;
             }
         }

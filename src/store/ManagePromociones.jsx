@@ -160,7 +160,7 @@ const ManagePromociones = () => {
                                     </div>
                                     <div className="text-right">
                                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Precio Combo</p>
-                                        <span className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter">${promo.precio_combo}</span>
+                                        <span className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter">${Number(promo.precio_combo || 0).toFixed(2)}</span>
                                     </div>
                                 </div>
 

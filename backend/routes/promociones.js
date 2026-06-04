@@ -46,7 +46,7 @@ migrate();
 router.get('/', async (req, res) => {
     try {
         const { tienda_id } = req.query;
-        let query = "SELECT * FROM promociones WHERE activo = 1";
+        let query = "SELECT * FROM promociones WHERE activo = 1 AND (fecha_inicio IS NULL OR fecha_inicio <= CURDATE()) AND (fecha_fin IS NULL OR fecha_fin >= CURDATE())";
         let params = [];
 
         if (tienda_id) {

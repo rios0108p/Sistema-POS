@@ -121,8 +121,9 @@ export default function ManageCustomers() {
     };
 
     const generateRandomID = () => {
-        const randomNum = Math.floor(1000 + Math.random() * 9000);
-        const newID = `CLI-${randomNum}`;
+        const timestamp = Date.now().toString(36).toUpperCase().slice(-4);
+        const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+        const newID = `CLI-${timestamp}${random}`;
         setFormData(prev => ({ ...prev, codigo_barras: newID }));
         toast.success(`ID de Membresía: ${newID}`);
     };
@@ -295,7 +296,8 @@ export default function ManageCustomers() {
         c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (c.email && c.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (c.nit_dpi && c.nit_dpi.includes(searchTerm)) ||
-        (c.codigo_barras && c.codigo_barras.includes(searchTerm))
+        (c.codigo_barras && c.codigo_barras.includes(searchTerm)) ||
+        (c.telefono && c.telefono.includes(searchTerm))
     );
 
     const handleShareWhatsApp = (cliente) => {
@@ -759,8 +761,8 @@ export default function ManageCustomers() {
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-xs font-black text-slate-700 dark:text-white uppercase tracking-tight truncate">{ps.producto_nombre}</p>
                                                         <div className="flex items-center gap-2 mt-0.5">
-                                                            <span className="text-[9px] text-slate-400 font-bold line-through">${Number(ps.precio_regular).toFixed(2)}</span>
-                                                            <span className="text-[9px] font-black text-emerald-600">${Number(ps.precio_especial).toFixed(2)}</span>
+                                                            <span className="text-[9px] text-slate-400 font-bold line-through">${Number(ps.precio_regular || 0).toFixed(2)}</span>
+                                                            <span className="text-[9px] font-black text-emerald-600">${Number(ps.precio_especial || 0).toFixed(2)}</span>
                                                             {ps.min_cantidad > 1 && (
                                                                 <span className="text-[8px] font-black text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 px-1.5 py-0.5 rounded-md uppercase tracking-widest">
                                                                     Mín {ps.min_cantidad} pzas
@@ -1071,7 +1073,7 @@ export default function ManageCustomers() {
                                                     </td>
                                                     <td className="px-6 py-4 text-right">
                                                         <span className={`text-sm font-black tracking-tighter ${esAbono ? 'text-emerald-600 dark:text-emerald-400' : evento.estado === 'CANCELADA' ? 'text-slate-400 line-through' : 'text-indigo-600 dark:text-indigo-400'}`}>
-                                                            {esAbono ? '-' : '+'}{storeConfig?.moneda || '$'}{Number(evento.monto_operado).toFixed(2)}
+                                                            {esAbono ? '-' : '+'}{storeConfig?.moneda || '$'}{Number(evento.monto_operado || 0).toFixed(2)}
                                                         </span>
                                                     </td>
                                                 </tr>

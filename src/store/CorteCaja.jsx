@@ -209,7 +209,7 @@ const CorteCaja = () => {
                         </p>
                         <div className="flex items-baseline gap-2">
                             <span className="text-4xl font-black text-emerald-500 tracking-tighter">{turnos.filter(t => t.estado === 'ABIERTO').length}</span>
-                            <span className="text-[10px] font-black text-emerald-200 dark:text-emerald-800 uppercase tracking-widest">En Turno</span>
+                            <span className="text-[10px] font-black text-emerald-200 dark:text-emerald-300 uppercase tracking-widest">En Turno</span>
                         </div>
                     </div>
 
@@ -221,7 +221,7 @@ const CorteCaja = () => {
                             <span className="text-4xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter">
                                 {formatCurrency(totalVentas)}
                             </span>
-                            <span className="text-[10px] font-black text-indigo-200 dark:text-indigo-800 uppercase tracking-widest">Global</span>
+                            <span className="text-[10px] font-black text-indigo-200 dark:text-indigo-300 uppercase tracking-widest">Global</span>
                         </div>
                     </div>
 
@@ -304,7 +304,7 @@ const CorteCaja = () => {
                                                             {Number(t.diferencia) > 0 ? '+' : ''}{formatCurrency(t.diferencia)}
                                                         </span>
                                                         <div className="w-24 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                                                            <div className={`h-full ${Number(t.diferencia) >= 0 ? "bg-emerald-500" : "bg-rose-500"}`} style={{ width: '100%' }}></div>
+                                                            <div className={`h-full ${Number(t.diferencia) >= 0 ? "bg-emerald-500" : "bg-rose-500"}`} style={{ width: `${Number(t.monto_final) > 0 ? Math.max(0, Math.min(100, 100 - (Math.abs(Number(t.diferencia || 0)) / Number(t.monto_final)) * 100)) : (Number(t.diferencia || 0) === 0 ? 100 : 0)}%` }}></div>
                                                         </div>
                                                     </div>
                                                 ) : (
@@ -358,7 +358,7 @@ const CorteCaja = () => {
                                         </tr>
                                         {expandedTurno === t.id && (
                                             <tr>
-                                                <td colSpan="7" className="px-0 bg-slate-50/50 dark:bg-slate-900/40 border-b dark:border-slate-700/50">
+                                                <td colSpan="6" className="px-0 bg-slate-50/50 dark:bg-slate-900/40 border-b dark:border-slate-700/50">
                                                     <div className="p-10 grid grid-cols-1 lg:grid-cols-12 gap-10 animate-in fade-in slide-in-from-top-4 duration-500">
                                                         {/* Financial Details Container */}
                                                         <div className="lg:col-span-5 space-y-8">

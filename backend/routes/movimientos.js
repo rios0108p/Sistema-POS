@@ -7,7 +7,6 @@ const router = express.Router();
 router.get('/', async (req, res) => {
     const { startDate, endDate, tienda_id, turno_id, usuario_id } = req.query;
 
-    let queryParams = [];
     let tiendaFilterV = '';
     let tiendaFilterC = '';
     let turnoFilterV = '';
@@ -18,28 +17,20 @@ router.get('/', async (req, res) => {
     if (tienda_id) {
         tiendaFilterV = 'AND v.tienda_id = ?';
         tiendaFilterC = 'AND c.tienda_id = ?';
-        queryParams.push(tienda_id);
     }
 
     if (turno_id) {
         turnoFilterV = 'AND v.turno_id = ?';
         turnoFilterC = 'AND c.turno_id = ?';
-        queryParams.push(turno_id);
     }
 
     if (usuario_id) {
         usuarioFilterV = 'AND (t.usuario_id = ?)';
         usuarioFilterC = 'AND (t.usuario_id = ?)';
-        // Note: For now we filter by Turn owner to ensure isolation even if table schema is old
     }
 
-    // Usar parámetros de fecha si existen, de lo contrario último mes por defecto - MySQL
     const dateRangeV = (startDate && endDate) ? 'AND v.fecha BETWEEN ? AND ?' : "AND v.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
     const dateRangeC = (startDate && endDate) ? 'AND c.fecha BETWEEN ? AND ?' : "AND c.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
-
-    if (startDate && endDate) {
-        queryParams.push(`${startDate} 00:00:00`, `${endDate} 23:59:59`);
-    }
 
     try {
         // Construir parámetros para la parte de VENTAS
@@ -141,7 +132,6 @@ router.get('/', async (req, res) => {
                 ${usuario_id ? 'AND a.usuario_id = ?' : ''}
             ) as movimientos
             ORDER BY fecha DESC
-            LIMIT 200
         `;
 
         const [rows] = await db.query(query, [...paramsV, ...paramsC, ...paramsA]);

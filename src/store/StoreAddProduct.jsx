@@ -24,6 +24,7 @@ const StoreAddProduct = () => {
   const [categorias, setCategorias] = useState([]);
   const [tiendas, setTiendas] = useState([]);
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState("");
+  const [pctGanancia, setPctGanancia] = useState("");
   
   const [infoProducto, setInfoProducto] = useState({
     nombre: "", 
@@ -72,10 +73,19 @@ const StoreAddProduct = () => {
       await categoriasAPI.create(nuevaCategoria);
       notify.success("Categoría agregada exitosamente");
       setNuevaCategoria("");
-      setShowCatForm(false);
       cargarDatos();
     } catch (error) {
       notify.error(error.message || "Error al agregar categoría");
+    }
+  };
+
+  const eliminarCategoria = async (id) => {
+    try {
+      await categoriasAPI.delete(id);
+      notify.success("Categoría eliminada");
+      cargarDatos();
+    } catch (error) {
+      notify.error(error.message || "Error al eliminar categoría");
     }
   };
 
@@ -135,13 +145,26 @@ const StoreAddProduct = () => {
           </button>
         </div>
 
-        {/* Formulario Nueva Categoría Dropdown */}
+        {/* Formulario Gestión de Categorías */}
         {showCatForm && (
-          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 flex items-center gap-3 animate-fade-in">
-            <h3 className="text-sm font-bold text-indigo-800">Nueva Categoría:</h3>
-            <input autoFocus value={nuevaCategoria} onChange={e => setNuevaCategoria(e.target.value)} placeholder="Nombre de la categoría..." className="flex-1 px-4 py-2 text-sm rounded-xl border border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            <button onClick={agregarCategoria} className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700">Guardar</button>
-            <button onClick={() => setShowCatForm(false)} className="p-2 text-rose-500 hover:bg-rose-100 rounded-xl"><X size={20}/></button>
+          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 space-y-4 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-indigo-800 uppercase tracking-wider">Gestionar Categorías</h3>
+              <button type="button" onClick={() => setShowCatForm(false)} className="p-1.5 text-rose-500 hover:bg-rose-100 rounded-xl"><X size={16}/></button>
+            </div>
+            <form onSubmit={agregarCategoria} className="flex items-center gap-3">
+              <input autoFocus value={nuevaCategoria} onChange={e => setNuevaCategoria(e.target.value)} placeholder="Nueva categoría..." className="flex-1 px-4 py-2 text-sm rounded-xl border border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+              <button type="submit" className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 text-sm whitespace-nowrap">+ Agregar</button>
+            </form>
+            <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">
+              {categorias.length === 0 && <p className="text-xs text-slate-400 italic">Sin categorías registradas</p>}
+              {categorias.map(c => (
+                <div key={c.id} className="flex items-center gap-1.5 bg-white border border-indigo-100 rounded-lg px-3 py-1.5">
+                  <span className="text-xs font-bold text-slate-700">{c.nombre}</span>
+                  <button type="button" onClick={() => eliminarCategoria(c.id)} className="text-rose-400 hover:text-rose-600 transition-colors ml-1"><X size={11}/></button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -199,7 +222,7 @@ const StoreAddProduct = () => {
                        <Warehouse size={12} className="text-indigo-500" /> Destino (Sucursal)
                      </label>
                      <select value={tiendaSeleccionada} onChange={(e) => setTiendaSeleccionada(e.target.value)} className="w-full text-sm font-bold text-slate-700 bg-transparent border-b-2 border-indigo-200 focus:border-indigo-600 focus:outline-none py-2 pb-3 transition-colors cursor-pointer text-center">
-                        <option value="">Almacén Central (Global)</option>
+                        <option value="" disabled>— Seleccione sucursal —</option>
                         {tiendas.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                       </select>
                    </div>
@@ -258,7 +281,7 @@ const StoreAddProduct = () => {
                           </div>
                         )}
                         {infoProducto.barcodes_agrupados.map((b, idx) => (
-                          <div key={idx} className="bg-white border text-slate-600 px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-2">
+                          <div key={b} className="bg-white border text-slate-600 px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-2">
                             {b} <X size={14} className="cursor-pointer hover:text-rose-500" onClick={() => setInfoProducto({...infoProducto, barcodes_agrupados: infoProducto.barcodes_agrupados.filter((_, i) => i !== idx)})} />
                           </div>
                         ))}
@@ -281,7 +304,21 @@ const StoreAddProduct = () => {
                 </h3>
               </div>
 
-              <div className="space-y-10 flex-col flex-1">
+              <div className="space-y-6 flex-col flex-1">
+
+                {/* Marco Fiscal - arriba para que afecte los cálculos */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 tracking-wider uppercase mb-2">Marco Fiscal</label>
+                  <select
+                    value={JSON.stringify(infoProducto.impuestos)}
+                    onChange={e => setInfoProducto({...infoProducto, impuestos: JSON.parse(e.target.value)})}
+                    className="w-full text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 focus:outline-none py-2.5 px-3 rounded-xl cursor-pointer"
+                  >
+                    {TAX_OPTIONS.map((opt, idx) => <option key={idx} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                </div>
+
+                {/* Costo */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 tracking-wider uppercase mb-1">Costo (Precio de Compra)</label>
                   <div className="flex items-center">
@@ -290,14 +327,58 @@ const StoreAddProduct = () => {
                   </div>
                 </div>
 
+                {/* % Ganancia → calcula precio de venta automáticamente */}
                 <div>
-                  <label className="block text-[10px] font-bold text-emerald-500 tracking-wider uppercase mb-1">Precio de Venta Público</label>
-                  <div className="flex items-center">
-                    <span className="text-xl font-black text-emerald-300 mr-2">{currency}</span>
-                    <input type="number" step="0.01" name="precio_original" value={infoProducto.precio_original} onChange={manejarCambio} className="w-full text-2xl font-black text-emerald-600 bg-transparent border-b-2 border-slate-100 focus:border-emerald-500 focus:outline-none py-2 transition-colors" required />
+                  <label className="block text-[10px] font-bold text-amber-500 tracking-wider uppercase mb-1">% Ganancia deseada</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number" step="0.1" placeholder="ej: 30"
+                      value={pctGanancia}
+                      onChange={e => {
+                        setPctGanancia(e.target.value);
+                        const costo = Number(infoProducto.precio_compra);
+                        if (!costo || e.target.value === '') return;
+                        const base = costo * (1 + parseFloat(e.target.value) / 100);
+                        let final = base;
+                        const ieps = infoProducto.impuestos.find(i => i.tipo === 'IEPS');
+                        if (ieps) final *= (1 + ieps.porcentaje / 100);
+                        const iva = infoProducto.impuestos.find(i => i.tipo === 'IVA');
+                        if (iva) final *= (1 + iva.porcentaje / 100);
+                        setInfoProducto(prev => ({ ...prev, precio_original: final.toFixed(2) }));
+                      }}
+                      className="w-full text-2xl font-black text-amber-600 bg-transparent border-b-2 border-slate-100 focus:border-amber-400 focus:outline-none py-2 transition-colors placeholder:text-slate-200 placeholder:text-xl"
+                    />
+                    <span className="text-2xl font-black text-amber-300">%</span>
                   </div>
                 </div>
 
+                {/* Precio de Venta (precio final que paga el cliente, YA incluye IVA) */}
+                <div>
+                  <label className="block text-[10px] font-bold text-emerald-500 tracking-wider uppercase mb-1">Precio de Venta Público <span className="text-slate-400 normal-case font-normal">(IVA incluido)</span></label>
+                  <div className="flex items-center">
+                    <span className="text-xl font-black text-emerald-300 mr-2">{currency}</span>
+                    <input
+                      type="number" step="0.01" name="precio_original" value={infoProducto.precio_original}
+                      onChange={e => {
+                        manejarCambio(e);
+                        const costo = Number(infoProducto.precio_compra);
+                        const final = Number(e.target.value);
+                        if (!costo || !final) return;
+                        let taxFactor = 1;
+                        const ieps = infoProducto.impuestos.find(i => i.tipo === 'IEPS');
+                        if (ieps) taxFactor *= (1 + ieps.porcentaje / 100);
+                        const iva = infoProducto.impuestos.find(i => i.tipo === 'IVA');
+                        if (iva) taxFactor *= (1 + iva.porcentaje / 100);
+                        const base = final / taxFactor;
+                        const pct = ((base - costo) / costo) * 100;
+                        setPctGanancia(isFinite(pct) ? pct.toFixed(1) : '');
+                      }}
+                      className="w-full text-2xl font-black text-emerald-600 bg-transparent border-b-2 border-slate-100 focus:border-emerald-500 focus:outline-none py-2 transition-colors" required
+                    />
+                  </div>
+                </div>
+
+                {/* Precio en Oferta */}
                 <div>
                   <label className="block text-[10px] font-bold text-rose-500 tracking-wider uppercase mb-1">Precio en Oferta (Opcional)</label>
                   <div className="flex items-center">
@@ -306,44 +387,56 @@ const StoreAddProduct = () => {
                   </div>
                 </div>
 
-                <div className="mt-8 p-6 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col md:flex-row items-center justify-between gap-6">
-                   <div className="flex-1 w-full">
-                     <label className="block text-[10px] font-bold text-slate-500 tracking-wider uppercase mb-3">Marco Fiscal y Retenciones (México)</label>
-                     <select 
-                      value={JSON.stringify(infoProducto.impuestos)} 
-                      onChange={e => {
-                        setInfoProducto({...infoProducto, impuestos: JSON.parse(e.target.value)});
-                      }}
-                      className="w-full text-sm font-bold text-slate-700 bg-white border border-slate-200 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 focus:outline-none py-3 px-4 rounded-xl transition-colors cursor-pointer"
-                    >
-                      {TAX_OPTIONS.map((opt, idx) => (
-                        <option key={idx} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                   </div>
-                   
-                   {infoProducto.impuestos.length > 0 && infoProducto.precio_original && (
-                     <div className="text-right whitespace-nowrap bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full md:w-auto">
-                       <p className="text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1">Monto Sugerido Final</p>
-                       <p className="text-2xl font-black text-indigo-700">
-                         {currency}{(() => {
-                            const base = Number(infoProducto.precio_original) || 0;
-                            let finalPrice = base;
-                            
-                            // IEPS se aplica primero sobre la base
-                            const ieps = infoProducto.impuestos.find(i => i.tipo === 'IEPS');
-                            if (ieps) finalPrice += base * (ieps.porcentaje / 100);
-                            
-                            // IVA se aplica sobre (base + IEPS) en México
-                            const iva = infoProducto.impuestos.find(i => i.tipo === 'IVA');
-                            if (iva) finalPrice += finalPrice * (iva.porcentaje / 100);
-                            
-                            return finalPrice.toFixed(2);
-                         })()}
-                       </p>
-                     </div>
-                   )}
-                </div>
+                {/* Desglose estilo Eleventa */}
+                {infoProducto.precio_compra && infoProducto.precio_original && (() => {
+                  const costo = Number(infoProducto.precio_compra) || 0;
+                  const final = Number(infoProducto.precio_original) || 0;
+                  const ieps = infoProducto.impuestos.find(i => i.tipo === 'IEPS');
+                  const iva  = infoProducto.impuestos.find(i => i.tipo === 'IVA');
+                  let taxFactor = 1;
+                  if (ieps) taxFactor *= (1 + ieps.porcentaje / 100);
+                  if (iva)  taxFactor *= (1 + iva.porcentaje  / 100);
+                  const base      = taxFactor > 1 ? final / taxFactor : final;
+                  const iepsAmt   = ieps ? base * (ieps.porcentaje / 100) : 0;
+                  const ivaAmt    = iva  ? (base + iepsAmt) * (iva.porcentaje / 100) : 0;
+                  const ganancia  = base - costo;
+                  const margen    = costo > 0 ? (ganancia / costo) * 100 : 0;
+                  return (
+                    <div className="p-5 bg-gradient-to-br from-slate-50 to-emerald-50/20 rounded-2xl border border-slate-100">
+                      <p className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase mb-3">Desglose de Precio</p>
+                      <div className="space-y-2 text-sm font-bold">
+                        <div className="flex justify-between text-slate-600">
+                          <span>Precio sin impuestos</span>
+                          <span className="font-black text-slate-800">{currency}{base.toFixed(2)}</span>
+                        </div>
+                        {ieps && (
+                          <div className="flex justify-between text-amber-600">
+                            <span>+ IEPS {ieps.porcentaje}%</span>
+                            <span>+ {currency}{iepsAmt.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {iva && (
+                          <div className="flex justify-between text-blue-600">
+                            <span>+ IVA {iva.porcentaje}%</span>
+                            <span>+ {currency}{ivaAmt.toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between pt-2 border-t border-slate-200 text-slate-800 font-black">
+                          <span>= Precio Final</span>
+                          <span>{currency}{final.toFixed(2)}</span>
+                        </div>
+                      </div>
+                      <div className={`mt-4 flex items-center justify-between px-4 py-3 rounded-xl ${ganancia >= 0 ? 'bg-emerald-50 border border-emerald-100' : 'bg-rose-50 border border-rose-100'}`}>
+                        <span className="text-[10px] font-black tracking-wider uppercase text-slate-500">Ganancia</span>
+                        <div>
+                          <span className={`text-xl font-black ${ganancia >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{currency}{ganancia.toFixed(2)}</span>
+                          <span className={`text-xs font-bold ml-2 ${margen >= 0 ? 'text-emerald-500' : 'text-rose-400'}`}>({margen.toFixed(1)}%)</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
               </div>
 
             </div>
